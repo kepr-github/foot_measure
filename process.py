@@ -219,15 +219,18 @@ class PointCloudProcessor:
         return True
     
     def calculate_foot_dimensions(self):
-        """足の長さ、幅、および周囲長を計算"""
+        """足の長さ、幅、周囲長、甲高@50%、AHIを計算"""
         if self.point_cloud is None:
-            return None, None, None
+            return None, None, None, None, None
         
         points = np.asarray(self.point_cloud.points)
         
         # X軸方向の範囲（足の長さ）
         x_min, x_max = points[:, 0].min(), points[:, 0].max()
         foot_length = abs(x_max - x_min)
+        
+        # 切断足長（truncated foot length）を計算（通常の足長と同じ）
+        truncated_foot_length = foot_length
         
         # Z軸方向の範囲（足の幅）
         z_min, z_max = points[:, 2].min(), points[:, 2].max()
@@ -236,14 +239,27 @@ class PointCloudProcessor:
         # 周囲長計算：各X座標でZ座標の差が最大となる位置を見つける
         circumference = self.calculate_circumference_at_max_z_range()
         
+        # 甲高@50%とAHIを計算
+        dorsum_height_50, ahi = self.calculate_arch_height_index(foot_length, truncated_foot_length)
+        
         print(f"足の寸法:")
         print(f"  長さ (X軸方向): {foot_length:.3f}")
         print(f"  幅   (Z軸方向): {foot_width:.3f}")
         print(f"  周囲長: {circumference:.3f}")
+        print(f"  甲高@50%: {dorsum_height_50:.3f}")
+        print(f"  AHI (Arch Height Index): {ahi:.3f}")
         print(f"  X範囲: {x_min:.3f} ～ {x_max:.3f}")
         print(f"  Z範囲: {z_min:.3f} ～ {z_max:.3f}")
         
-        return foot_length, foot_width, circumference
+        # AHIの評価
+        if ahi > 0.356:
+            print(f"  AHI評価: 高弓足 (>0.356)")
+        elif ahi <= 0.275:
+            print(f"  AHI評価: 扁平足 (≤0.275)")
+        else:
+            print(f"  AHI評価: 正常範囲 (0.275-0.356)")
+        
+        return foot_length, foot_width, circumference, dorsum_height_50, ahi
     
     def calculate_circumference_at_max_z_range(self):
         """Z座標の差が最大となるX位置でYZ平面の断面周囲長を計算し、その断面点を赤色に染める"""
@@ -394,6 +410,69 @@ class PointCloudProcessor:
         self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
         print(f"断面の点 {len(cross_section_indices)} 個を赤色に染色しました")
 
+    def calculate_arch_height_index(self, foot_length, truncated_foot_length):
+        """甲高@50%とAHI（Arch Height Index）を計算"""
+        if self.point_cloud is None:
+            return None, None
+        
+        points = np.asarray(self.point_cloud.points)
+        
+        # 足長の50%位置を計算
+        x_min, x_max = points[:, 0].min(), points[:, 0].max()
+        x_50_percent = x_min + 0.5 * foot_length
+        
+        print(f"50%位置のX座標: {x_50_percent:.3f}")
+        
+        # X = 50%位置での直交スライス平面を生成（Xに直交）
+        slice_width = foot_length * 0.02  # 足長の2%の幅で断面を取る
+        mask = (points[:, 0] >= x_50_percent - slice_width/2) & (points[:, 0] <= x_50_percent + slice_width/2)
+        slice_points = points[mask]
+        slice_indices = np.where(mask)[0]
+        
+        if len(slice_points) < 3:
+            print("50%位置での断面点が不足しています")
+            return 0.0, 0.0
+        
+        print(f"50%位置断面の点数: {len(slice_points)}")
+        
+        # スライスで得た断面点群の最大Z（背側高さ）を取得
+        # Y軸の最小値を足底平面として扱う
+        y_min = points[:, 1].min()  # 全体の足底平面
+        slice_y_max = slice_points[:, 1].max()  # 断面での最大高さ（背側）
+        
+        # 甲高@50% = 断面での最大高さ - 足底平面の高さ
+        dorsum_height_50 = slice_y_max - y_min
+        
+        # AHI（Arch Height Index）を計算
+        # AHI = dorsum_height@50% / truncated_foot_length
+        ahi = dorsum_height_50 / truncated_foot_length if truncated_foot_length > 0 else 0.0
+        
+        print(f"足底平面Y座標: {y_min:.3f}")
+        print(f"50%位置最大高さ: {slice_y_max:.3f}")
+        print(f"甲高@50%: {dorsum_height_50:.3f}")
+        print(f"AHI: {ahi:.3f}")
+        
+        # 50%位置断面の点を青色に染める
+        self.color_arch_slice_points(slice_indices)
+        
+        return dorsum_height_50, ahi
+    
+    def color_arch_slice_points(self, slice_indices):
+        """甲高@50%測定に使用した断面の点を青色に染める"""
+        if not self.point_cloud.has_colors():
+            # 色情報がない場合は全点にデフォルト色を設定
+            points = np.asarray(self.point_cloud.points)
+            colors = np.ones((len(points), 3)) * 0.7  # デフォルトグレー
+            self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
+        
+        colors = np.asarray(self.point_cloud.colors)
+        
+        # 50%位置断面の点を青色に設定
+        colors[slice_indices] = [0.0, 0.0, 1.0]  # 青色
+        
+        self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
+        print(f"甲高@50%測定断面の点 {len(slice_indices)} 個を青色に染色しました")
+
     def save_result(self, output_dir="output", filename="processed_aruga_1.ply"):
         """処理結果をPLYファイルとして保存"""
         if not os.path.exists(output_dir):
@@ -439,6 +518,8 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'foot_length': None,
                 'foot_width': None,
                 'circumference': None,
+                'dorsum_height_50': None,
+                'ahi': None,
                 'output_file': None,
                 'point_count': 0
             }
@@ -466,7 +547,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
         # 足の寸法を計算
         if verbose:
             print("足の寸法を計算中...")
-        foot_length, foot_width, circumference = processor.calculate_foot_dimensions()
+        foot_length, foot_width, circumference, dorsum_height_50, ahi = processor.calculate_foot_dimensions()
         
         # 結果を保存
         if output_file_path is None:
@@ -491,6 +572,8 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'foot_length': foot_length,
                 'foot_width': foot_width,
                 'circumference': circumference,
+                'dorsum_height_50': dorsum_height_50,
+                'ahi': ahi,
                 'output_file': output_file_path,
                 'point_count': len(processor.point_cloud.points)
             }
@@ -501,6 +584,8 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'foot_length': foot_length,
                 'foot_width': foot_width,
                 'circumference': circumference,
+                'dorsum_height_50': dorsum_height_50,
+                'ahi': ahi,
                 'output_file': None,
                 'point_count': len(processor.point_cloud.points)
             }
@@ -512,6 +597,8 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
             'foot_length': None,
             'foot_width': None,
             'circumference': None,
+            'dorsum_height_50': None,
+            'ahi': None,
             'output_file': None,
             'point_count': 0
         }
@@ -525,6 +612,8 @@ def main():
         print(f"  足の長さ: {result['foot_length']:.3f}")
         print(f"  足の幅: {result['foot_width']:.3f}")
         print(f"  周囲長: {result['circumference']:.3f}")
+        print(f"  甲高@50%: {result['dorsum_height_50']:.3f}")
+        print(f"  AHI: {result['ahi']:.3f}")
         print(f"  点数: {result['point_count']}")
         print(f"  出力ファイル: {result['output_file']}")
     else:

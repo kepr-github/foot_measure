@@ -95,6 +95,8 @@ async def process_ply(file: UploadFile = File(...)):
                 "foot_length": result['foot_length'],
                 "foot_width": result['foot_width'],
                 "circumference": result['circumference'],
+                "dorsum_height_50": result['dorsum_height_50'],
+                "ahi": result['ahi'],
                 "point_count": result['point_count'],
                 "original_filename": file.filename,
                 "processed_file_available": processed_file_content is not None,
@@ -148,6 +150,8 @@ async def process_ply_with_file(file: UploadFile = File(...)):
             "X-Foot-Length": str(result['foot_length']),
             "X-Foot-Width": str(result['foot_width']),
             "X-Circumference": str(result['circumference']),
+            "X-Dorsum-Height-50": str(result['dorsum_height_50']),
+            "X-AHI": str(result['ahi']),
             "X-Point-Count": str(result['point_count']),
             "X-Processing-Success": "true"
         }
