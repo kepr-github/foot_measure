@@ -6,14 +6,109 @@
     <title>Foot Measurement API Test</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; }
-        .container { max-width: 800px; margin: 0 auto; }
+        .container { max-width: 1200px; margin: 0 auto; }
         .upload-area { border: 2px dashed #ccc; padding: 20px; text-align: center; margin: 20px 0; }
         .result { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
         .error { background: #ffe6e6; color: #d00; }
         .success { background: #e6ffe6; color: #060; }
         button { padding: 10px 20px; margin: 10px 5px; cursor: pointer; }
         .loading { display: none; }
+        
+        /* 3D描画用のスタイル */
+    #threejs-wrapper { display:none; margin:20px 0; }
+    .viewer-row { display:flex; gap:12px; }
+    .viewer-box { flex:1; position:relative; border:1px solid #ccc; height:500px; background:#fafafa; }
+    .viewer-title { position:absolute; top:6px; left:8px; background:rgba(0,0,0,0.55); color:#fff; padding:4px 8px; font-size:12px; border-radius:3px; }
+    canvas { outline:none; }
+        .viewer-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.9);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+    .viewer-info { position:absolute; bottom:10px; left:10px; background:rgba(0,0,0,0.65); color:#fff; padding:8px; border-radius:4px; font-size:11px; line-height:1.3; max-width:45%; }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // OrbitControlsを手動で定義（CDNが利用できない場合の対策）
+        if (typeof THREE.OrbitControls === 'undefined') {
+            // 簡易版OrbitControls（左:回転 / 右:平行移動）
+            THREE.OrbitControls = function(camera, domElement) {
+                this.camera = camera;
+                this.domElement = domElement;
+                this.target = new THREE.Vector3();
+                this.enableDamping = true;
+                this.dampingFactor = 0.05;
+                this.enableZoom = true;
+                this.enablePan = true;
+                this.rotateSpeed = 0.01;
+                this.panSpeed = 0.002; // 距離に比例
+                domElement.style.cursor = 'grab';
+                
+                this.update = function() {};
+                this.reset = function() { this.target.set(0,0,0); };
+                
+                let isMouseDown = false;
+                let button = -1; // 0:左 2:右
+                let mouseX = 0, mouseY = 0;
+                
+                domElement.addEventListener('contextmenu', e => e.preventDefault());
+                
+                domElement.addEventListener('mousedown', (e) => {
+                    isMouseDown = true;
+                    button = e.button;
+                    mouseX = e.clientX; mouseY = e.clientY;
+                    domElement.style.cursor = button === 2 ? 'move' : 'grabbing';
+                });
+                window.addEventListener('mouseup', () => {
+                    isMouseDown = false; button = -1; domElement.style.cursor = 'grab';
+                });
+                
+                domElement.addEventListener('mousemove', (e) => {
+                    if (!isMouseDown) return;
+                    const deltaX = e.clientX - mouseX;
+                    const deltaY = e.clientY - mouseY;
+                    if (button === 0) { // 回転
+                        const spherical = new THREE.Spherical();
+                        spherical.setFromVector3(camera.position.clone().sub(this.target));
+                        spherical.theta -= deltaX * this.rotateSpeed;
+                        spherical.phi += deltaY * this.rotateSpeed;
+                        spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+                        const newPos = new THREE.Vector3().setFromSpherical(spherical).add(this.target);
+                        camera.position.copy(newPos);
+                        camera.lookAt(this.target);
+                    } else if (button === 2 && this.enablePan) { // 平行移動
+                        const distance = camera.position.clone().sub(this.target).length();
+                        const panScale = distance * this.panSpeed;
+                        // カメラのX/Y軸を取得
+                        const xAxis = new THREE.Vector3();
+                        const yAxis = new THREE.Vector3();
+                        camera.updateMatrixWorld();
+                        xAxis.setFromMatrixColumn(camera.matrix, 0); // 右方向
+                        yAxis.setFromMatrixColumn(camera.matrix, 1); // 上方向
+                        // 移動ベクトル（画面ピクセル→ワールド）
+                        const pan = new THREE.Vector3();
+                        pan.addScaledVector(xAxis, -deltaX * panScale);
+                        pan.addScaledVector(yAxis,  deltaY * panScale);
+                        camera.position.add(pan);
+                        this.target.add(pan);
+                    }
+                    mouseX = e.clientX; mouseY = e.clientY;
+                });
+                
+                domElement.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const scale = e.deltaY > 0 ? 1.1 : 0.9;
+                    const dir = camera.position.clone().sub(this.target);
+                    dir.multiplyScalar(scale);
+                    camera.position.copy(dir.add(this.target));
+                });
+            };
+        }
+    </script>
 </head>
 <body>
     <div class="container">
@@ -24,7 +119,7 @@
             <input type="file" id="fileInput" accept=".ply" />
             <br><br>
             <button onclick="uploadFile()">測定実行</button>
-            <button onclick="uploadFileWithDownload()">測定実行 + ファイルダウンロード</button>
+            <button onclick="uploadFileWithDownload()">測定実行 + 3D描画</button>
         </div>
         
         <h2>足と靴の一致度解析</h2>
@@ -44,6 +139,28 @@
         
         <div id="result"></div>
         
+                <!-- 3D描画領域 BEFORE / AFTER -->
+                <div id="threejs-wrapper">
+                    <div class="viewer-row">
+                        <div class="viewer-box" id="before-box">
+                            <div class="viewer-title">Before (入力)</div>
+                            <div class="viewer-controls">
+                                <div><strong>操作:</strong> 左=回転 右=平行移動</div>
+                                <button onclick="resetCamera('before')">リセット</button>
+                            </div>
+                            <div class="viewer-info" id="before-info">未読込</div>
+                        </div>
+                        <div class="viewer-box" id="after-box">
+                            <div class="viewer-title">After (処理後)</div>
+                            <div class="viewer-controls">
+                                <div><strong>操作:</strong> 左=回転 右=平行移動</div>
+                                <button onclick="resetCamera('after')">リセット</button>
+                            </div>
+                            <div class="viewer-info" id="after-info">未読込</div>
+                        </div>
+                    </div>
+                </div>
+        
         <h2>API エンドポイント</h2>
         <ul>
             <li><strong>GET /</strong> - API情報</li>
@@ -55,6 +172,267 @@
     </div>
 
     <script>
+    // Viewer管理（独立した before/after）
+    const viewers = { before:null, after:null };
+        
+        // Three.jsの初期化
+        function createViewer(id) {
+            const box = document.getElementById(`${id}-box`);
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf6f6f6);
+            const camera = new THREE.PerspectiveCamera(70, box.clientWidth / box.clientHeight, 0.01, 2000);
+            camera.position.set(0,0,1);
+            const renderer = new THREE.WebGLRenderer({ antialias:true });
+            renderer.setSize(box.clientWidth, box.clientHeight);
+            box.appendChild(renderer.domElement);
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambient);
+            const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1,1,1); scene.add(dir);
+            const axes = new THREE.AxesHelper(0.3); scene.add(axes);
+            const viewer = { id, box, scene, camera, renderer, controls, cloud:null };
+            viewers[id] = viewer;
+            return viewer;
+        }
+
+        function initViewers() {
+            createViewer('before');
+            createViewer('after');
+            function animate() {
+                requestAnimationFrame(animate);
+                for (const key of Object.keys(viewers)) {
+                    const v = viewers[key]; if (!v) continue;
+                    v.controls.update();
+                    v.renderer.render(v.scene, v.camera);
+                }
+            }
+            animate();
+            window.addEventListener('resize', () => {
+                for (const k of Object.keys(viewers)) {
+                    const v = viewers[k]; if (!v) return;
+                    v.camera.aspect = v.box.clientWidth / v.box.clientHeight;
+                    v.camera.updateProjectionMatrix();
+                    v.renderer.setSize(v.box.clientWidth, v.box.clientHeight);
+                }
+            });
+        }
+
+        function resetCamera(which) {
+            const v = viewers[which]; if (!v) return;
+            v.camera.position.set(0,0,1); v.controls.reset();
+        }
+        
+        function updateViewerCloud(which, data, label) {
+            const v = viewers[which]; if (!v) return;
+            if (v.cloud) { v.scene.remove(v.cloud); v.cloud.geometry.dispose(); v.cloud.material.dispose(); v.cloud=null; }
+            if (!data.vertices.length) return;
+            const positions = new Float32Array(data.vertices.length*3);
+            const colors = new Float32Array(data.vertices.length*3);
+            for (let i=0;i<data.vertices.length;i++) {
+                const pt = data.vertices[i];
+                positions[i*3]=pt.x; positions[i*3+1]=pt.y; positions[i*3+2]=pt.z;
+                let r = pt.r, g = pt.g, b = pt.b;
+                if (r===undefined || g===undefined || b===undefined) { r=0.8; g=0.4; b=0.2; }
+                colors[i*3]=r; colors[i*3+1]=g; colors[i*3+2]=b;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+            geo.computeBoundingBox();
+            const size = geo.boundingBox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x,size.y,size.z);
+            const material = new THREE.PointsMaterial({ size:Math.max(maxDim*0.002,0.001), vertexColors:true });
+            v.cloud = new THREE.Points(geo, material);
+            v.scene.add(v.cloud);
+            // カメラ調整
+            const center = geo.boundingBox.getCenter(new THREE.Vector3());
+            const dist = maxDim * 2.2;
+            v.camera.position.set(center.x+dist, center.y+dist*0.5, center.z+dist);
+            v.controls.target.copy(center); v.controls.update();
+            document.getElementById(`${which}-info`).innerHTML = `
+                <div><strong>${label}</strong></div>
+                <div>点数: ${data.vertices.length.toLocaleString()}</div>
+                <div>範囲 X:${size.x.toFixed(3)} Y:${size.y.toFixed(3)} Z:${size.z.toFixed(3)}</div>
+                <div>Colors: ${data.hasColors? 'Yes' : 'No'} ${data.colorStats? (data.colorStats.normalized? '(Norm)': ''):''}</div>`;
+            document.getElementById('threejs-wrapper').style.display='block';
+        }
+        
+    // PLYファイルのパーサ（バイナリ/ASCII汎用 & ストライド計算 & 色正規化）
+        function parsePLYFromArrayBuffer(arrayBuffer) {
+            try {
+                const textDecoder = new TextDecoder('utf-8');
+                const u8 = new Uint8Array(arrayBuffer);
+                let header = '';
+                let headerEnd = -1;
+                const maxHeader = Math.min(8000, u8.length);
+                for (let i = 0; i < maxHeader; i++) {
+                    header += String.fromCharCode(u8[i]);
+                    if (header.includes('\nend_header')) {
+                        headerEnd = header.indexOf('end_header') + 'end_header'.length + 1;
+                        break;
+                    }
+                }
+                if (headerEnd === -1) throw new Error('end_header が見つかりません');
+                const headerLines = header.split(/\r?\n/);
+                let format = 'ascii';
+                let littleEndian = true;
+                let vertexCount = 0;
+                const properties = [];
+                let inVertexElement = false;
+                for (const lineRaw of headerLines) {
+                    const line = lineRaw.trim();
+                    if (!line) continue;
+                    if (line.startsWith('format')) {
+                        if (line.includes('binary_little_endian')) { format = 'binary'; littleEndian = true; }
+                        else if (line.includes('binary_big_endian')) { format = 'binary'; littleEndian = false; }
+                    } else if (line.startsWith('element')) {
+                        inVertexElement = line.startsWith('element vertex');
+                        if (inVertexElement) {
+                            const parts = line.split(/\s+/); vertexCount = parseInt(parts[2]);
+                        }
+                    } else if (inVertexElement && line.startsWith('property')) {
+                        // property <type> <name>
+                        const parts = line.split(/\s+/);
+                        if (parts.length >= 3) {
+                            properties.push({ type: parts[1], name: parts[2] });
+                        }
+                    } else if (line === 'end_header') {
+                        break;
+                    }
+                }
+                if (vertexCount === 0) throw new Error('頂点数が0です');
+                const typeSize = { char:1, int8:1, uchar:1, uint8:1, short:2, int16:2, ushort:2, uint16:2, int:4, int32:4, uint:4, uint32:4, float:4, float32:4, double:8, float64:8 };
+                const readFunc = {
+                    // 1byte: 'uchar','uint8' は常に符号なし、それ以外(char,int8)は符号付き
+                    1: (dv,o,le,t)=> (t==='char' || t==='int8') ? dv.getInt8(o) : dv.getUint8(o),
+                    2: (dv,o,le,t)=> (t.includes('short')&& !t.includes('u'))? dv.getInt16(o,le): dv.getUint16(o,le),
+                    4: (dv,o,le,t)=> t.startsWith('float')? dv.getFloat32(o,le): (t.includes('int') && !t.includes('u'))? dv.getInt32(o,le): dv.getUint32(o,le),
+                    8: (dv,o,le,t)=> dv.getFloat64(o,le)
+                };
+                const stride = properties.reduce((s,p)=> s + (typeSize[p.type]||4),0);
+                const hasColorFloat = properties.some(p=> ['f_dc_0','f_dc_1','f_dc_2'].includes(p.name));
+                const hasRGB = properties.some(p=> ['red','green','blue'].includes(p.name));
+                const hasColors = hasColorFloat || hasRGB;
+                console.log(`PLY解析: vertices=${vertexCount}, format=${format}, stride=${stride}, colors=${hasColors}`);
+                const vertices = [];
+                const MAX_POINTS = 60000;
+                let rMin=Infinity,rMax=-Infinity,gMin=Infinity,gMax=-Infinity,bMin=Infinity,bMax=-Infinity;
+                const rgbByte = hasRGB && !hasColorFloat; // 純粋な0-255 RGBのみ
+                if (format === 'ascii') {
+                    const bodyText = textDecoder.decode(u8.slice(headerEnd));
+                    const lines = bodyText.split(/\r?\n/);
+                    for (let i=0;i<vertexCount && i<lines.length;i++) {
+                        const parts = lines[i].trim().split(/\s+/);
+                        if (parts.length < properties.length) continue;
+                        let xi=NaN, yi=NaN, zi=NaN; let r,g,b;
+                        for (let p=0; p<properties.length; p++) {
+                            const prop = properties[p];
+                            const val = parseFloat(parts[p]);
+                            if (prop.name === 'x') xi = val;
+                            else if (prop.name === 'y') yi = val;
+                            else if (prop.name === 'z') zi = val;
+                            else if (prop.name === 'f_dc_0') r = val; // 0-1想定
+                            else if (prop.name === 'f_dc_1') g = val;
+                            else if (prop.name === 'f_dc_2') b = val;
+                            else if (prop.name === 'red') r = val/255; else if (prop.name==='green') g=val/255; else if (prop.name==='blue') b=val/255;
+                        }
+                        if (Number.isFinite(xi) && Number.isFinite(yi) && Number.isFinite(zi)) {
+                            const v = {x:xi,y:yi,z:zi};
+                            if (hasColors) {
+                                if (r!==undefined) { rMin=Math.min(rMin,r); rMax=Math.max(rMax,r); }
+                                if (g!==undefined) { gMin=Math.min(gMin,g); gMax=Math.max(gMax,g); }
+                                if (b!==undefined) { bMin=Math.min(bMin,b); bMax=Math.max(bMax,b); }
+                                v.r = r; v.g = g; v.b = b;
+                            }
+                            vertices.push(v);
+                        }
+                    }
+                } else { // binary
+                    const dv = new DataView(arrayBuffer, headerEnd);
+                    let offset = 0;
+                    for (let i=0;i<vertexCount;i++) {
+                        if (offset + stride > dv.byteLength) break;
+                        let xi, yi, zi; let r,g,b;
+                        let innerOff = offset;
+                        for (const prop of properties) {
+                            const sz = typeSize[prop.type] || 4;
+                            const reader = readFunc[sz];
+                            let val = reader ? reader(dv, innerOff, littleEndian, prop.type) : 0;
+                            if (prop.name === 'x') xi = val;
+                            else if (prop.name === 'y') yi = val;
+                            else if (prop.name === 'z') zi = val;
+                            else if (prop.name === 'f_dc_0') r = val; // 0-1想定
+                            else if (prop.name === 'f_dc_1') g = val;
+                            else if (prop.name === 'f_dc_2') b = val;
+                            else if (prop.name === 'red') r = val/255; else if (prop.name==='green') g=val/255; else if (prop.name==='blue') b=val/255;
+                            innerOff += sz;
+                        }
+                        if (Number.isFinite(xi) && Number.isFinite(yi) && Number.isFinite(zi)) {
+                            const v = {x:xi,y:yi,z:zi};
+                            if (hasColors) {
+                                if (r!==undefined) { rMin=Math.min(rMin,r); rMax=Math.max(rMax,r); }
+                                if (g!==undefined) { gMin=Math.min(gMin,g); gMax=Math.max(gMax,g); }
+                                if (b!==undefined) { bMin=Math.min(bMin,b); bMax=Math.max(bMax,b); }
+                                v.r = r; v.g = g; v.b = b;
+                            }
+                            vertices.push(v);
+                        }
+                        offset += stride;
+                    }
+                }
+                // サンプリング（多すぎる場合）
+                if (vertices.length > MAX_POINTS) {
+                    const step = Math.ceil(vertices.length / MAX_POINTS);
+                    const sampled = [];
+                    for (let i=0;i<vertices.length;i+=step) sampled.push(vertices[i]);
+                    console.log(`点数オーバー (${vertices.length}) → ${sampled.length} に間引き`);
+                    // min/maxは再計算
+                    if (hasColors) {
+                        rMin=gMin=bMin=Infinity; rMax=gMax=bMax=-Infinity;
+                        for (const v of sampled) {
+                            if (v.r!==undefined){rMin=Math.min(rMin,v.r);rMax=Math.max(rMax,v.r);} 
+                            if (v.g!==undefined){gMin=Math.min(gMin,v.g);gMax=Math.max(gMax,v.g);} 
+                            if (v.b!==undefined){bMin=Math.min(bMin,v.b);bMax=Math.max(bMax,v.b);} 
+                        }
+                        normalizeColors(sampled);
+                        return { vertices: sampled, hasColors, colorStats: {rMin,rMax,gMin,gMax,bMin,bMax, normalized:true} };
+                    }
+                    return { vertices: sampled, hasColors, colorStats: null };
+                }
+                console.log(`読み込み完了: ${vertices.length}点`);
+                if (vertices.length>0) console.log('最初の5点:', vertices.slice(0,5));
+                    if (hasColors) {
+                        if (rgbByte) {
+                            // 既に0-1へ変換済 (元0-255) -> 正規化不要
+                            return { vertices, hasColors, colorStats:{rMin,rMax,gMin,gMax,bMin,bMax, normalized:false, source:'byteRGB'} };
+                        }
+                        const needsNorm = rMin < 0 || rMax > 1 || gMin < 0 || gMax > 1 || bMin < 0 || bMax > 1;
+                        if (needsNorm) {
+                            normalizeColors(vertices);
+                            console.log('カラー値を0-1へ正規化');
+                            return { vertices, hasColors, colorStats:{rMin,rMax,gMin,gMax,bMin,bMax, normalized:true} };
+                        }
+                    }
+                    return { vertices, hasColors, colorStats: hasColors?{rMin,rMax,gMin,gMax,bMin,bMax, normalized:false}:null };
+            } catch (e) {
+                console.error('PLY解析エラー:', e);
+                throw new Error('PLY解析に失敗: ' + e.message);
+            }
+        }
+
+        function normalizeColors(verts) {
+            let rVals=[], gVals=[], bVals=[];
+            for (const v of verts) { if (v.r!==undefined) rVals.push(v.r); if (v.g!==undefined) gVals.push(v.g); if (v.b!==undefined) bVals.push(v.b); }
+            const rMin=Math.min(...rVals), rMax=Math.max(...rVals);
+            const gMin=Math.min(...gVals), gMax=Math.max(...gVals);
+            const bMin=Math.min(...bVals), bMax=Math.max(...bVals);
+            for (const v of verts) {
+                if (v.r!==undefined) v.r = (v.r - rMin)/(rMax-rMin || 1);
+                if (v.g!==undefined) v.g = (v.g - gMin)/(gMax-gMin || 1);
+                if (v.b!==undefined) v.b = (v.b - bMin)/(bMax-bMin || 1);
+            }
+        }
+        
         function showLoading() {
             document.getElementById('loading').style.display = 'block';
             document.getElementById('result').innerHTML = '';
@@ -109,7 +487,7 @@
             }
         }
         
-        async function uploadFileWithDownload() {
+    async function uploadFileWithDownload() {
             const fileInput = document.getElementById('fileInput');
             const file = fileInput.files[0];
             
@@ -124,6 +502,10 @@
             formData.append('file', file);
             
             try {
+                // 元ファイルを先にパース
+                const originalBuf = await file.arrayBuffer();
+                let originalData = parsePLYFromArrayBuffer(originalBuf);
+                originalData.vertices = originalData.vertices.filter(v=> Number.isFinite(v.x)&&Number.isFinite(v.y)&&Number.isFinite(v.z));
                 const response = await fetch('/process-with-file', {
                     method: 'POST',
                     body: formData
@@ -134,21 +516,22 @@
                     const footWidth = response.headers.get('X-Foot-Width');
                     const pointCount = response.headers.get('X-Point-Count');
                     
-                    // ファイルをダウンロード
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `processed_${file.name}`;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    
+                    // 処理済ファイルをArrayBufferとして取得
+                    const arrayBuffer = await response.arrayBuffer();
+                    const timestamp = new Date().toISOString().replace(/[:]/g, '-');
+                    const filename = `processed_${timestamp}.ply`;
+                    // 処理済みパース
+                    let processedData = parsePLYFromArrayBuffer(arrayBuffer);
+                    processedData.vertices = processedData.vertices.filter(v=> Number.isFinite(v.x)&&Number.isFinite(v.y)&&Number.isFinite(v.z));
+                    updateViewerCloud('before', originalData, '入力');
+                    updateViewerCloud('after', processedData, '処理後');
                     showResult(`
-                        <h3>測定結果 & ファイルダウンロード完了</h3>
+                        <h3>測定結果 & Before/After表示</h3>
                         <p><strong>足の長さ:</strong> ${footLength}</p>
                         <p><strong>足の幅:</strong> ${footWidth}</p>
-                        <p><strong>点数:</strong> ${pointCount}</p>
-                        <p><strong>処理済みファイル:</strong> ダウンロード済み</p>
+                        <p><strong>処理後点数:</strong> ${pointCount}</p>
+                        <p><strong>元点数(表示分):</strong> ${originalData.vertices.length}</p>
+                        <p><em>左右独立ビュー: 左=入力 / 右=処理後 (RGB反映)</em></p>
                     `);
                 } else {
                     const result = await response.json();
@@ -216,6 +599,9 @@
                 showResult(`<h3>エラー</h3><p>通信エラー: ${error.message}</p>`, true);
             }
         }
+        
+        // ページ読み込み時にThree.jsを初期化
+    window.addEventListener('load', function() { initViewers(); });
     </script>
 </body>
 </html>
