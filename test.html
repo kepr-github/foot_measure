@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foot Measurement API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .upload-area { border: 2px dashed #ccc; padding: 20px; text-align: center; margin: 20px 0; }
+        .result { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+        .error { background: #ffe6e6; color: #d00; }
+        .success { background: #e6ffe6; color: #060; }
+        button { padding: 10px 20px; margin: 10px 5px; cursor: pointer; }
+        .loading { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Foot Measurement API Test</h1>
+        
+        <div class="upload-area">
+            <input type="file" id="fileInput" accept=".ply" />
+            <br><br>
+            <button onclick="uploadFile()">測定実行</button>
+            <button onclick="uploadFileWithDownload()">測定実行 + ファイルダウンロード</button>
+        </div>
+        
+        <div id="loading" class="loading">
+            <p>処理中...</p>
+        </div>
+        
+        <div id="result"></div>
+        
+        <h2>API エンドポイント</h2>
+        <ul>
+            <li><strong>GET /</strong> - API情報</li>
+            <li><strong>GET /health</strong> - ヘルスチェック</li>
+            <li><strong>POST /process</strong> - PLY処理（寸法のみ）</li>
+            <li><strong>POST /process-with-file</strong> - PLY処理 + ファイル返却</li>
+        </ul>
+    </div>
+
+    <script>
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('result').innerHTML = '';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function showResult(content, isError = false) {
+            hideLoading();
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = content;
+            resultDiv.className = 'result ' + (isError ? 'error' : 'success');
+        }
+        
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('PLYファイルを選択してください');
+                return;
+            }
+            
+            showLoading();
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showResult(`
+                        <h3>測定結果</h3>
+                        <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(3)}</p>
+                        <p><strong>足の幅:</strong> ${result.foot_width.toFixed(3)}</p>
+                        <p><strong>点数:</strong> ${result.point_count}</p>
+                        <p><strong>ファイル名:</strong> ${result.original_filename}</p>
+                    `);
+                } else {
+                    showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
+                }
+            } catch (error) {
+                showResult(`<h3>エラー</h3><p>通信エラー: ${error.message}</p>`, true);
+            }
+        }
+        
+        async function uploadFileWithDownload() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('PLYファイルを選択してください');
+                return;
+            }
+            
+            showLoading();
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('/process-with-file', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const footLength = response.headers.get('X-Foot-Length');
+                    const footWidth = response.headers.get('X-Foot-Width');
+                    const pointCount = response.headers.get('X-Point-Count');
+                    
+                    // ファイルをダウンロード
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `processed_${file.name}`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    
+                    showResult(`
+                        <h3>測定結果 & ファイルダウンロード完了</h3>
+                        <p><strong>足の長さ:</strong> ${footLength}</p>
+                        <p><strong>足の幅:</strong> ${footWidth}</p>
+                        <p><strong>点数:</strong> ${pointCount}</p>
+                        <p><strong>処理済みファイル:</strong> ダウンロード済み</p>
+                    `);
+                } else {
+                    const result = await response.json();
+                    showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
+                }
+            } catch (error) {
+                showResult(`<h3>エラー</h3><p>通信エラー: ${error.message}</p>`, true);
+            }
+        }
+    </script>
+</body>
+</html>

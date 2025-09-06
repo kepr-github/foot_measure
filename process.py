@@ -241,54 +241,123 @@ class PointCloudProcessor:
         except Exception as e:
             return False
 
-def main():
-    """メイン処理"""
+def process_ply_file(input_file_path, output_file_path=None, verbose=True):
+    """
+    PLYファイルを処理して足の寸法を測定
+    
+    Args:
+        input_file_path (str): 入力PLYファイルのパス
+        output_file_path (str): 出力PLYファイルのパス（Noneの場合は自動生成）
+        verbose (bool): 詳細ログの表示
+    
+    Returns:
+        dict: 処理結果 {
+            'success': bool,
+            'foot_length': float,
+            'foot_width': float,
+            'output_file': str,
+            'point_count': int
+        }
+    """
     processor = PointCloudProcessor()
     
-    # PLYファイルを読み込み
-    print("PLYファイルを読み込み中...")
-    result = processor.load_ply_file("data/aruga_1.ply")
-    if not result:
-        print("PLYファイルの読み込みに失敗しました")
-        return
+    try:
+        # PLYファイルを読み込み
+        if verbose:
+            print("PLYファイルを読み込み中...")
+        result = processor.load_ply_file(input_file_path)
+        if not result:
+            return {
+                'success': False,
+                'error': 'PLYファイルの読み込みに失敗しました',
+                'foot_length': None,
+                'foot_width': None,
+                'output_file': None,
+                'point_count': 0
+            }
+        
+        if verbose:
+            print(f"点群が正常に読み込まれました。点数: {len(processor.point_cloud.points)}")
+        
+        # 処理の実行
+        if verbose:
+            print("Y軸を反転中...")
+        processor.flip_y_axis()
+        
+        if verbose:
+            print("主要な平面を除去中...")
+        processor.remove_planes()
+        
+        if verbose:
+            print("主成分軸に整列中...")
+        processor.align_to_principal_component()
+        
+        if verbose:
+            print("ノイズ除去中...")
+        processor.remove_noise()
+        
+        # 足の寸法を計算
+        if verbose:
+            print("足の寸法を計算中...")
+        foot_length, foot_width = processor.calculate_foot_dimensions()
+        
+        # 結果を保存
+        if output_file_path is None:
+            output_file_path = "output/processed_result.ply"
+        
+        if verbose:
+            print("結果を保存中...")
+        
+        # 出力ディレクトリを作成
+        os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+        
+        result = processor.save_result(
+            output_dir=os.path.dirname(output_file_path),
+            filename=os.path.basename(output_file_path)
+        )
+        
+        if result:
+            if verbose:
+                print(f"処理完了: {output_file_path} に保存されました")
+            return {
+                'success': True,
+                'foot_length': foot_length,
+                'foot_width': foot_width,
+                'output_file': output_file_path,
+                'point_count': len(processor.point_cloud.points)
+            }
+        else:
+            return {
+                'success': False,
+                'error': '保存に失敗しました',
+                'foot_length': foot_length,
+                'foot_width': foot_width,
+                'output_file': None,
+                'point_count': len(processor.point_cloud.points)
+            }
+            
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'処理中にエラーが発生しました: {str(e)}',
+            'foot_length': None,
+            'foot_width': None,
+            'output_file': None,
+            'point_count': 0
+        }
+
+def main():
+    """メイン処理（単体実行用）"""
+    result = process_ply_file("data/aruga_1.ply", "output/processed_aruga_1.ply")
     
-    print(f"点群が正常に読み込まれました。点数: {len(processor.point_cloud.points)}")
-    
-    # 色情報の確認
-    if processor.point_cloud.has_colors():
-        print("RGB色情報が正常に読み込まれました")
-        colors = np.asarray(processor.point_cloud.colors)
-        print(f"色の範囲: R[{colors[:,0].min():.3f}-{colors[:,0].max():.3f}], G[{colors[:,1].min():.3f}-{colors[:,1].max():.3f}], B[{colors[:,2].min():.3f}-{colors[:,2].max():.3f}]")
+    if result['success']:
+        print(f"✓ 処理成功")
+        print(f"  足の長さ: {result['foot_length']:.3f}")
+        print(f"  足の幅: {result['foot_width']:.3f}")
+        print(f"  点数: {result['point_count']}")
+        print(f"  出力ファイル: {result['output_file']}")
     else:
-        print("色情報がありません")
-    
-    # 1. Y軸を反転
-    print("Y軸を反転中...")
-    processor.flip_y_axis()
-    
-    # 2. 平面フィッティングで主要な平面を除去
-    print("主要な平面を除去中...")
-    processor.remove_planes()
-    
-    # 4. 主成分方向をX軸に整列
-    print("主成分軸に整列中...")
-    processor.align_to_principal_component()
-    
-    # 5. ノイズ除去
-    print("ノイズ除去中...")
-    processor.remove_noise()
-    
-    # 6. 足の寸法を計算
-    print("足の寸法を計算中...")
-    foot_length, foot_width = processor.calculate_foot_dimensions()
-    
-    # 7. 結果を保存
-    print("結果を保存中...")
-    result = processor.save_result()
-    if result:
-        print("処理完了: output/processed_aruga_1.ply に保存されました")
-    else:
-        print("保存に失敗しました")
+        print(f"✗ 処理失敗: {result['error']}")
 
 if __name__ == "__main__":
     main()

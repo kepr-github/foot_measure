@@ -4,9 +4,12 @@ services:
   pointcloud-processor:
     build: .
     container_name: pointcloud_app
+    ports:
+      - "8000:8000"
     volumes:
       - .:/app
       - ./data:/app/data
+      - ./output:/app/output
     environment:
       - PYTHONPATH=/app
     working_dir: /app

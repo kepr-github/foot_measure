@@ -1,13 +1,116 @@
-# 点群処理による平面検出プロジェクト
+# Foot Measurement Project
 
-このプロジェクトはDockerを使用してPython環境で点群処理を行い、RANSACアルゴリズムによる平面検出を実装しています。
+PLYファイルから足の寸法を測定するプロジェクト
 
 ## 機能
 
-- Open3Dを使用した点群処理
-- RANSACアルゴリズムによる平面検出
-- サンプル点群データの生成
-- 検出結果の可視化と保存
+- PLYファイルの読み込み（f_dc_0, f_dc_1, f_dc_2をRGB色として処理）
+- Y軸反転
+- 主要平面の除去
+- 主成分軸の整列（XZ平面投影）
+- ノイズ除去
+- 足の長さ・幅の測定
+
+## 使用方法
+
+### 1. Docker環境での使用
+
+#### APIサーバーとして起動
+```bash
+docker-compose up -d --build
+```
+
+APIサーバーが http://localhost:8000 で起動します。
+
+#### APIエンドポイント
+- `GET /` - API情報
+- `GET /health` - ヘルスチェック
+- `POST /process` - PLY処理（寸法のみ返却）
+- `POST /process-with-file` - PLY処理 + 処理済みファイル返却
+
+#### APIテスト
+ブラウザで `test.html` を開くか、以下のcurlコマンドでテスト：
+
+```bash
+# 寸法のみ取得
+curl -X POST "http://localhost:8000/process" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "file=@data/aruga_1.ply"
+
+# 処理済みファイルもダウンロード
+curl -X POST "http://localhost:8000/process-with-file" \
+     -H "accept: application/octet-stream" \
+     -H "Content-Type: multipart/form-data" \
+     -F "file=@data/aruga_1.ply" \
+     --output processed_result.ply
+```
+
+### 2. コンテナ内でスクリプト直接実行
+
+```bash
+# コンテナに入る
+docker-compose exec pointcloud-processor bash
+
+# 処理スクリプトを直接実行
+python process.py
+
+# または特定のファイルを処理
+python -c "from process import process_ply_file; print(process_ply_file('data/aruga_1.ply'))"
+```
+
+### 3. ローカル環境での使用
+
+```bash
+# 依存関係のインストール
+pip install -r requirements.txt
+
+# 処理スクリプトの実行
+python process.py
+
+# APIサーバーの起動
+python api.py
+```
+
+## 出力
+
+### 処理結果
+- **足の長さ**: X軸方向の最大最小の絶対値
+- **足の幅**: Z軸方向の最大最小の絶対値
+- **処理済みPLYファイル**: `output/` ディレクトリに保存
+
+### API レスポンス例
+```json
+{
+  "success": true,
+  "foot_length": 0.245,
+  "foot_width": 0.098,
+  "point_count": 15420,
+  "original_filename": "foot_scan.ply",
+  "message": "処理が正常に完了しました"
+}
+```
+
+## ファイル構成
+
+- `process.py` - 点群処理スクリプト（単体実行可能）
+- `api.py` - FastAPI サーバー
+- `docker-compose.yml` - Docker Compose設定
+- `Dockerfile` - Docker設定
+- `requirements.txt` - Python依存関係
+- `test.html` - APIテスト用HTMLファイル
+- `data/` - 入力PLYファイル
+- `output/` - 出力ファイル
+
+## 処理パイプライン
+
+1. PLYファイル読み込み（RGB色情報対応）
+2. Y軸反転
+3. 主要平面除去（RANSAC）
+4. 主成分軸整列（XZ平面投影）
+5. ノイズ除去（統計的 + 半径ベース）
+6. 寸法計算
+7. 結果保存
 - 単体テスト
 
 ## 必要な環境
