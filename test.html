@@ -13,6 +13,8 @@
         .success { background: #e6ffe6; color: #060; }
         button { padding: 10px 20px; margin: 10px 5px; cursor: pointer; }
         .loading { display: none; }
+        details summary { padding: 8px; background: #e9e9e9; border-radius: 4px; margin-bottom: 10px; }
+        details[open] summary { margin-bottom: 15px; }
         
         /* 3D描画用のスタイル */
     #threejs-wrapper { display:none; margin:20px 0; }
@@ -131,6 +133,29 @@
             <input type="file" id="shoeFileInput" accept=".ply" />
             <br><br>
             <button onclick="analyzeFitMatch()">一致度解析実行</button>
+        </div>
+        
+        <h2>数値データからの言語解析テスト</h2>
+        <div class="upload-area">
+            <label>足長 (mm):</label>
+            <input type="number" id="footLength" value="250" step="0.1" />
+            <br><br>
+            <label>足幅 (mm):</label>
+            <input type="number" id="footWidth" value="100" step="0.1" />
+            <br><br>
+            <label>足囲 (mm):</label>
+            <input type="number" id="circumference" value="240" step="0.1" />
+            <br><br>
+            <label>甲高 (mm):</label>
+            <input type="number" id="dorsumHeight" value="65" step="0.1" />
+            <br><br>
+            <label>AHI指数:</label>
+            <input type="number" id="ahi" value="280" step="0.1" />
+            <br><br>
+            <label>点群数:</label>
+            <input type="number" id="pointCount" value="10000" step="1" />
+            <br><br>
+            <button onclick="analyzeDescription()">言語解析実行</button>
         </div>
         
         <div id="loading" class="loading">
@@ -472,15 +497,39 @@
                 const result = await response.json();
                 
                 if (response.ok) {
+                    const analysis = result.linguistic_analysis;
                     showResult(`
                         <h3>測定結果</h3>
-                        <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(3)}</p>
-                        <p><strong>足の幅:</strong> ${result.foot_width.toFixed(3)}</p>
-                        <p><strong>周囲長:</strong> ${result.circumference.toFixed(3)}</p>
-                        <p><strong>甲高@50%:</strong> ${result.dorsum_height_50.toFixed(3)}</p>
+                        <p><strong>解析ソース:</strong> ${result.analysis_source === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'}</p>
+                        <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(3)} mm</p>
+                        <p><strong>足の幅:</strong> ${result.foot_width.toFixed(3)} mm</p>
+                        <p><strong>周囲長:</strong> ${result.circumference.toFixed(3)} mm</p>
+                        <p><strong>甲高@50%:</strong> ${result.dorsum_height_50.toFixed(3)} mm</p>
                         <p><strong>AHI:</strong> ${result.ahi.toFixed(3)}</p>
                         <p><strong>点数:</strong> ${result.point_count}</p>
                         <p><strong>ファイル名:</strong> ${result.original_filename}</p>
+                        
+                        <h4>足の特徴解析</h4>
+                        <div style="margin-top: 15px;">
+                            <h5>全体的な特徴</h5>
+                            <p>${analysis.overview}</p>
+                            
+                            <h5>形状の特徴</h5>
+                            <p>${analysis.shape_features}</p>
+                            
+                            <h5>靴選びのアドバイス</h5>
+                            <p>${analysis.shoe_advice}</p>
+                            
+                            <h5>健康面での注意点</h5>
+                            <p>${analysis.health_notes}</p>
+                            
+                            <details style="margin-top: 15px;">
+                                <summary style="cursor: pointer; font-weight: bold;">詳細解析レポート</summary>
+                                <div style="margin-top: 10px; padding: 15px; background: #f5f5f5; border-radius: 5px; white-space: pre-line; border: 1px solid #ddd;">
+                                    ${analysis.full_description}
+                                </div>
+                            </details>
+                        </div>
                     `);
                 } else {
                     showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
@@ -521,6 +570,45 @@
                     const dorsumHeight50 = response.headers.get('X-Dorsum-Height-50');
                     const ahi = response.headers.get('X-AHI');
                     const pointCount = response.headers.get('X-Point-Count');
+                    const analysisSource = response.headers.get('X-Analysis-Source');
+                    const overviewB64 = response.headers.get('X-Analysis-Overview-B64');
+                    
+                    // base64でエンコードされた概要をデコード
+                    let overviewText = '';
+                    if (overviewB64) {
+                        try {
+                            overviewText = atob(overviewB64);
+                        } catch (e) {
+                            overviewText = '概要の取得に失敗しました';
+                        }
+                    }
+                    
+                    // 言語解析の詳細を取得するため、数値データでanalyze-descriptionエンドポイントを呼び出し
+                    let linguisticAnalysis = null;
+                    try {
+                        const params = new URLSearchParams({
+                            foot_length: footLength,
+                            foot_width: footWidth,
+                            circumference: circumference,
+                            dorsum_height_50: dorsumHeight50,
+                            ahi: ahi,
+                            point_count: pointCount
+                        });
+                        
+                        const analysisResponse = await fetch('/analyze-description?' + params, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                        
+                        if (analysisResponse.ok) {
+                            const analysisResult = await analysisResponse.json();
+                            linguisticAnalysis = analysisResult.linguistic_analysis;
+                        }
+                    } catch (e) {
+                        console.error('言語解析の取得に失敗:', e);
+                    }
                     
                     // 処理済ファイルをArrayBufferとして取得
                     const arrayBuffer = await response.arrayBuffer();
@@ -531,18 +619,66 @@
                     processedData.vertices = processedData.vertices.filter(v=> Number.isFinite(v.x)&&Number.isFinite(v.y)&&Number.isFinite(v.z));
                     updateViewerCloud('before', originalData, '入力');
                     updateViewerCloud('after', processedData, '処理後');
-                    showResult(`
+                    
+                    // 結果表示を構築
+                    let resultHTML = `
                         <h3>測定結果 & Before/After表示</h3>
-                        <p><strong>足の長さ:</strong> ${footLength}</p>
-                        <p><strong>足の幅:</strong> ${footWidth}</p>
-                        <p><strong>周囲長:</strong> ${circumference}</p>
-                        <p><strong>甲高@50%:</strong> ${dorsumHeight50}</p>
-                        <p><strong>AHI:</strong> ${ahi}</p>
-                        <p><strong>処理後点数:</strong> ${pointCount}</p>
-                        <p><strong>元点数(表示分):</strong> ${originalData.vertices.length}</p>
+                        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                            <div style="flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px;">
+                                <h4>数値測定結果</h4>
+                                <p><strong>足の長さ:</strong> ${footLength} mm</p>
+                                <p><strong>足の幅:</strong> ${footWidth} mm</p>
+                                <p><strong>周囲長:</strong> ${circumference} mm</p>
+                                <p><strong>甲高@50%:</strong> ${dorsumHeight50} mm</p>
+                                <p><strong>AHI:</strong> ${ahi}</p>
+                                <p><strong>処理後点数:</strong> ${pointCount}</p>
+                                <p><strong>元点数(表示分):</strong> ${originalData.vertices.length}</p>
+                            </div>`;
+                    
+                    // 言語解析結果が取得できた場合は表示
+                    if (linguisticAnalysis) {
+                        resultHTML += `
+                            <div style="flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: #f9f9f9;">
+                                <h4>AI解析結果 (${analysisSource === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'})</h4>
+                                <div style="margin-bottom: 10px;">
+                                    <strong>全体的な特徴:</strong>
+                                    <p style="margin: 5px 0;">${linguisticAnalysis.overview}</p>
+                                </div>
+                                <div style="margin-bottom: 10px;">
+                                    <strong>形状の特徴:</strong>
+                                    <p style="margin: 5px 0;">${linguisticAnalysis.shape_features}</p>
+                                </div>
+                                <div style="margin-bottom: 10px;">
+                                    <strong>靴選びのアドバイス:</strong>
+                                    <p style="margin: 5px 0;">${linguisticAnalysis.shoe_advice}</p>
+                                </div>
+                                <div style="margin-bottom: 10px;">
+                                    <strong>健康面での注意点:</strong>
+                                    <p style="margin: 5px 0;">${linguisticAnalysis.health_notes}</p>
+                                </div>
+                                <details style="margin-top: 10px;">
+                                    <summary style="cursor: pointer; font-weight: bold;">詳細解析レポート</summary>
+                                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 3px; white-space: pre-line;">
+                                        ${linguisticAnalysis.full_description}
+                                    </div>
+                                </details>
+                            </div>`;
+                    } else if (overviewText) {
+                        // ヘッダーからの概要のみ表示
+                        resultHTML += `
+                            <div style="flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: #f9f9f9;">
+                                <h4>AI解析結果 (${analysisSource === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'})</h4>
+                                <p>${overviewText}</p>
+                            </div>`;
+                    }
+                    
+                    resultHTML += `
+                        </div>
                         <p><em>左右独立ビュー: 左=入力 / 右=処理後</em></p>
                         <p><em>※ 赤色: 最大幅断面（周囲長測定）、青色: 50%位置断面（甲高・AHI測定）</em></p>
-                    `);
+                    `;
+                    
+                    showResult(resultHTML);
                 } else {
                     const result = await response.json();
                     showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
@@ -607,6 +743,84 @@
                 }
             } catch (error) {
                 showResult(`<h3>エラー</h3><p>通信エラー: ${error.message}</p>`, true);
+            }
+        }
+        
+        // 数値データから言語解析を実行
+        async function analyzeDescription() {
+            const footLength = parseFloat(document.getElementById('footLength').value);
+            const footWidth = parseFloat(document.getElementById('footWidth').value);
+            const circumference = parseFloat(document.getElementById('circumference').value);
+            const dorsumHeight = parseFloat(document.getElementById('dorsumHeight').value);
+            const ahi = parseFloat(document.getElementById('ahi').value);
+            const pointCount = parseInt(document.getElementById('pointCount').value);
+
+            // 入力値検証
+            if (isNaN(footLength) || isNaN(footWidth) || isNaN(circumference) || 
+                isNaN(dorsumHeight) || isNaN(ahi) || isNaN(pointCount)) {
+                showError('すべての数値を正しく入力してください');
+                return;
+            }
+
+            showLoading();
+            
+            try {
+                const params = new URLSearchParams({
+                    foot_length: footLength,
+                    foot_width: footWidth,
+                    circumference: circumference,
+                    dorsum_height_50: dorsumHeight,
+                    ahi: ahi,
+                    point_count: pointCount
+                });
+
+                const response = await fetch('/analyze-description?' + params, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    const analysis = result.linguistic_analysis;
+                    showResult(`
+                        <h3>足の特徴解析結果</h3>
+                        <p><strong>解析ソース:</strong> ${result.analysis_source === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'}</p>
+                        
+                        <h4>入力数値</h4>
+                        <p><strong>足長:</strong> ${footLength} mm</p>
+                        <p><strong>足幅:</strong> ${footWidth} mm</p>
+                        <p><strong>足囲:</strong> ${circumference} mm</p>
+                        <p><strong>甲高:</strong> ${dorsumHeight} mm</p>
+                        <p><strong>AHI指数:</strong> ${ahi}</p>
+                        <p><strong>点群数:</strong> ${pointCount} 点</p>
+                        
+                        <h4>全体的な特徴</h4>
+                        <p>${analysis.overview}</p>
+                        
+                        <h4>形状の特徴</h4>
+                        <p>${analysis.shape_features}</p>
+                        
+                        <h4>靴選びのアドバイス</h4>
+                        <p>${analysis.shoe_advice}</p>
+                        
+                        <h4>健康面での注意点</h4>
+                        <p>${analysis.health_notes}</p>
+                        
+                        <h4>詳細説明</h4>
+                        <div style="white-space: pre-line; border: 1px solid #ddd; padding: 10px; background: #f9f9f9;">
+                            ${analysis.full_description}
+                        </div>
+                    `, 'success');
+                } else {
+                    showError('解析エラー: ' + result.detail);
+                }
+            } catch (error) {
+                showError('解析中にエラーが発生しました: ' + error.message);
+            } finally {
+                hideLoading();
             }
         }
         

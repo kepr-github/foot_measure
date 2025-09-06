@@ -1,6 +1,6 @@
 # Foot Measurement Project
 
-PLYファイルから足の寸法を測定するプロジェクト
+PLYファイルから足の寸法を測定し、AI による言語解析を提供するプロジェクト
 
 ## 機能
 
@@ -10,10 +10,23 @@ PLYファイルから足の寸法を測定するプロジェクト
 - 主成分軸の整列（XZ平面投影）
 - ノイズ除去
 - 足の長さ・幅の測定
+- **NEW**: 測定結果の言語解析（ChatGPT連携 + ダミーフォールバック）
+- **NEW**: 足の特徴、靴選びアドバイス、健康面の注意点を自然言語で提供
 
 ## 使用方法
 
-### 1. Docker環境での使用
+### 1. 環境設定（オプション）
+
+ChatGPT連携を使用する場合は、`.env` ファイルを作成してOpenAI APIキーを設定：
+
+```bash
+cp .env.example .env
+# .env ファイルでOPENAI_API_KEYを設定
+```
+
+注意：APIキーが設定されていない場合でも、ダミーデータによる言語解析が利用できます。
+
+### 2. Docker環境での使用
 
 #### APIサーバーとして起動
 ```bash
@@ -25,25 +38,40 @@ APIサーバーが http://localhost:8000 で起動します。
 #### APIエンドポイント
 - `GET /` - API情報
 - `GET /health` - ヘルスチェック
-- `POST /process` - PLY処理（寸法のみ返却）
-- `POST /process-with-file` - PLY処理 + 処理済みファイル返却
+- `POST /process` - PLY処理（寸法測定 + 言語解析）
+- `POST /process-with-file` - PLY処理 + 処理済みファイル返却（寸法測定 + 言語解析）
+- `POST /analyze-description` - 数値データから言語解析のみ実行
+- `POST /match` - 足と靴の一致度解析
+
+#### 新機能：言語解析
+数値測定結果から以下の情報を自然言語で提供：
+- 全体的な足の特徴
+- 形状の特徴分析
+- 靴選びのアドバイス
+- 健康面での注意点
+
+ChatGPT APIが利用できない場合は、自動的にダミーデータによる解析に切り替わります。
 
 #### APIテスト
 ブラウザで `test.html` を開くか、以下のcurlコマンドでテスト：
 
 ```bash
-# 寸法のみ取得
+# 寸法測定 + 言語解析
 curl -X POST "http://localhost:8000/process" \
      -H "accept: application/json" \
      -H "Content-Type: multipart/form-data" \
      -F "file=@data/aruga_1.ply"
 
-# 処理済みファイルもダウンロード
+# 処理済みファイルもダウンロード（言語解析結果はヘッダーに含まれる）
 curl -X POST "http://localhost:8000/process-with-file" \
      -H "accept: application/octet-stream" \
      -H "Content-Type: multipart/form-data" \
      -F "file=@data/aruga_1.ply" \
      --output processed_result.ply
+
+# 数値データからの言語解析のみ
+curl -X POST "http://localhost:8000/analyze-description?foot_length=250&foot_width=100&circumference=240&dorsum_height_50=65&ahi=280&point_count=10000" \
+     -H "accept: application/json"
 ```
 
 ### 2. コンテナ内でスクリプト直接実行

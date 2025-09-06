@@ -5,9 +5,15 @@ from fastapi.staticfiles import StaticFiles
 import tempfile
 import os
 import shutil
+import base64
 from process import process_ply_file
+from analysis_descriptor import foot_analyzer
 import uvicorn
 from datetime import datetime
+from dotenv import load_dotenv
+
+# 環境変数を読み込み
+load_dotenv()
 
 app = FastAPI(
     title="Foot Measurement API",
@@ -36,7 +42,9 @@ async def root():
         "endpoints": {
             "/": "API情報",
             "/test": "テストページ",
-            "/process": "PLYファイル処理",
+            "/process": "PLYファイル処理（寸法測定 + 言語解析）",
+            "/process-with-file": "PLYファイル処理 + ファイル返却（寸法測定 + 言語解析）",
+            "/analyze-description": "数値データから言語解析のみ実行",
             "/match": "足と靴の一致度解析",
             "/health": "ヘルスチェック"
         }
@@ -55,13 +63,13 @@ async def health_check():
 @app.post("/process")
 async def process_ply(file: UploadFile = File(...)):
     """
-    PLYファイルを処理して足の寸法を測定
+    PLYファイルを処理して足の寸法を測定し、言語で解析結果を説明
     
     Args:
         file: アップロードされたPLYファイル
     
     Returns:
-        dict: 処理結果と寸法情報
+        dict: 処理結果と寸法情報、および言語による解析説明
     """
     # ファイル形式チェック
     if not file.filename.lower().endswith('.ply'):
@@ -83,6 +91,16 @@ async def process_ply(file: UploadFile = File(...)):
             if not result['success']:
                 raise HTTPException(status_code=500, detail=result['error'])
             
+            # 数値解析結果を言語で説明
+            analysis_result = foot_analyzer.analyze_foot_measurements({
+                'foot_length': result['foot_length'],
+                'foot_width': result['foot_width'],
+                'circumference': result['circumference'],
+                'dorsum_height_50': result['dorsum_height_50'],
+                'ahi': result['ahi'],
+                'point_count': result['point_count']
+            })
+            
             # 処理されたファイルを読み込み
             if os.path.exists(output_path):
                 with open(output_path, "rb") as f:
@@ -98,6 +116,8 @@ async def process_ply(file: UploadFile = File(...)):
                 "dorsum_height_50": result['dorsum_height_50'],
                 "ahi": result['ahi'],
                 "point_count": result['point_count'],
+                "linguistic_analysis": analysis_result['linguistic_description'],
+                "analysis_source": analysis_result['analysis_source'],
                 "original_filename": file.filename,
                 "processed_file_available": processed_file_content is not None,
                 "message": "処理が正常に完了しました"
@@ -106,16 +126,62 @@ async def process_ply(file: UploadFile = File(...)):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"処理中にエラーが発生しました: {str(e)}")
 
+@app.post("/analyze-description")
+async def analyze_foot_description(
+    foot_length: float,
+    foot_width: float,
+    circumference: float,
+    dorsum_height_50: float,
+    ahi: float,
+    point_count: int
+):
+    """
+    数値データから足の特徴を言語で解析・説明
+    
+    Args:
+        foot_length: 足長 (mm)
+        foot_width: 足幅 (mm)
+        circumference: 足囲 (mm)
+        dorsum_height_50: 甲高 (mm)
+        ahi: AHI指数
+        point_count: 点群数
+    
+    Returns:
+        dict: 言語による解析結果
+    """
+    try:
+        measurements = {
+            'foot_length': foot_length,
+            'foot_width': foot_width,
+            'circumference': circumference,
+            'dorsum_height_50': dorsum_height_50,
+            'ahi': ahi,
+            'point_count': point_count
+        }
+        
+        analysis_result = foot_analyzer.analyze_foot_measurements(measurements)
+        
+        return {
+            "success": True,
+            "measurements": measurements,
+            "linguistic_analysis": analysis_result['linguistic_description'],
+            "analysis_source": analysis_result['analysis_source'],
+            "message": "言語解析が正常に完了しました"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"解析中にエラーが発生しました: {str(e)}")
+
 @app.post("/process-with-file")
 async def process_ply_with_file(file: UploadFile = File(...)):
     """
-    PLYファイルを処理して足の寸法と結果ファイルを返却
+    PLYファイルを処理して足の寸法と結果ファイルを返却（言語解析付き）
     
     Args:
         file: アップロードされたPLYファイル
     
     Returns:
-        FileResponse: 処理されたPLYファイル（ヘッダーに寸法情報も含む）
+        FileResponse: 処理されたPLYファイル（ヘッダーに寸法情報と言語解析結果も含む）
     """
     # ファイル形式チェック
     if not file.filename.lower().endswith('.ply'):
@@ -141,11 +207,27 @@ async def process_ply_with_file(file: UploadFile = File(...)):
         if not os.path.exists(output_path):
             raise HTTPException(status_code=500, detail="出力ファイルが生成されませんでした")
         
+        # 数値解析結果を言語で説明
+        analysis_result = foot_analyzer.analyze_foot_measurements({
+            'foot_length': result['foot_length'],
+            'foot_width': result['foot_width'],
+            'circumference': result['circumference'],
+            'dorsum_height_50': result['dorsum_height_50'],
+            'ahi': result['ahi'],
+            'point_count': result['point_count']
+        })
+        
         # ファイル名を生成
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_filename = f"processed_{timestamp}.ply"
         
-        # レスポンスヘッダーに寸法情報を追加
+        # レスポンスヘッダーに寸法情報と言語解析結果を追加
+        # 日本語の概要をbase64エンコード
+        overview_text = analysis_result['linguistic_description']['overview']
+        if len(overview_text) > 200:
+            overview_text = overview_text[:200] + "..."
+        overview_b64 = base64.b64encode(overview_text.encode('utf-8')).decode('ascii')
+        
         headers = {
             "X-Foot-Length": str(result['foot_length']),
             "X-Foot-Width": str(result['foot_width']),
@@ -153,7 +235,10 @@ async def process_ply_with_file(file: UploadFile = File(...)):
             "X-Dorsum-Height-50": str(result['dorsum_height_50']),
             "X-AHI": str(result['ahi']),
             "X-Point-Count": str(result['point_count']),
-            "X-Processing-Success": "true"
+            "X-Processing-Success": "true",
+            "X-Analysis-Source": analysis_result['analysis_source'],
+            "X-Analysis-Overview-B64": overview_b64,
+            "Content-Disposition": f'attachment; filename="{output_filename}"'
         }
         
         return FileResponse(
