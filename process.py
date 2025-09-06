@@ -206,9 +206,9 @@ class PointCloudProcessor:
         return True
     
     def calculate_foot_dimensions(self):
-        """足の長さと幅を計算"""
+        """足の長さ、幅、および周囲長を計算"""
         if self.point_cloud is None:
-            return None, None
+            return None, None, None
         
         points = np.asarray(self.point_cloud.points)
         
@@ -220,13 +220,156 @@ class PointCloudProcessor:
         z_min, z_max = points[:, 2].min(), points[:, 2].max()
         foot_width = abs(z_max - z_min)
         
+        # 周囲長計算：各X座標でZ座標の差が最大となる位置を見つける
+        circumference = self.calculate_circumference_at_max_z_range()
+        
         print(f"足の寸法:")
         print(f"  長さ (X軸方向): {foot_length:.3f}")
         print(f"  幅   (Z軸方向): {foot_width:.3f}")
+        print(f"  周囲長: {circumference:.3f}")
         print(f"  X範囲: {x_min:.3f} ～ {x_max:.3f}")
         print(f"  Z範囲: {z_min:.3f} ～ {z_max:.3f}")
         
-        return foot_length, foot_width
+        return foot_length, foot_width, circumference
+    
+    def calculate_circumference_at_max_z_range(self):
+        """Z座標の差が最大となるX位置でYZ平面の断面周囲長を計算し、その断面点を赤色に染める"""
+        points = np.asarray(self.point_cloud.points)
+        
+        # X座標を一定間隔で区切って、各区間でZ座標の範囲を計算
+        x_min, x_max = points[:, 0].min(), points[:, 0].max()
+        num_slices = 50  # X方向の分割数
+        x_bins = np.linspace(x_min, x_max, num_slices + 1)
+        
+        max_z_range = 0
+        best_x_pos = None
+        
+        # 各X区間でZ座標の範囲を計算
+        for i in range(num_slices):
+            x_start, x_end = x_bins[i], x_bins[i + 1]
+            mask = (points[:, 0] >= x_start) & (points[:, 0] <= x_end)
+            slice_points = points[mask]
+            
+            if len(slice_points) > 0:
+                z_range = slice_points[:, 2].max() - slice_points[:, 2].min()
+                if z_range > max_z_range:
+                    max_z_range = z_range
+                    best_x_pos = (x_start + x_end) / 2
+        
+        if best_x_pos is None:
+            print("断面位置を特定できませんでした")
+            return 0.0
+        
+        print(f"最大Z範囲位置: X = {best_x_pos:.3f}, Z範囲 = {max_z_range:.3f}")
+        
+        # 最適なX位置での断面点を抽出（幅を少し広げて十分な点を確保）
+        slice_width = (x_max - x_min) / num_slices * 1.5  # 少し幅を広げる
+        mask = (points[:, 0] >= best_x_pos - slice_width/2) & (points[:, 0] <= best_x_pos + slice_width/2)
+        cross_section_points = points[mask]
+        cross_section_indices = np.where(mask)[0]
+        
+        if len(cross_section_points) < 3:
+            print("断面の点数が不足しています")
+            return 0.0
+        
+        print(f"断面点数: {len(cross_section_points)}")
+        
+        # YZ平面への投影（X座標を無視してY,Z座標のみ使用）
+        yz_points = cross_section_points[:, [1, 2]]  # Y, Z座標のみ
+        
+        # 2D凸包を計算して周囲長を求める
+        try:
+            from scipy.spatial import ConvexHull
+            hull = ConvexHull(yz_points)
+            
+            # 凸包の頂点を順序に従って取得
+            hull_points = yz_points[hull.vertices]
+            
+            # 周囲長を計算
+            circumference = 0.0
+            for i in range(len(hull_points)):
+                p1 = hull_points[i]
+                p2 = hull_points[(i + 1) % len(hull_points)]
+                circumference += np.linalg.norm(p2 - p1)
+            
+            print(f"凸包による周囲長: {circumference:.3f}")
+            print(f"凸包頂点数: {len(hull_points)}")
+            
+            # 断面の点を赤色に染める
+            self.color_cross_section_points(cross_section_indices)
+            
+            return circumference
+            
+        except ImportError:
+            print("scipy.spatialが利用できません。簡易的な周囲長計算を実行します")
+            # scipyが無い場合の簡易計算
+            return self.calculate_simple_circumference(yz_points, cross_section_indices)
+        except Exception as e:
+            print(f"凸包計算エラー: {e}")
+            return self.calculate_simple_circumference(yz_points, cross_section_indices)
+    
+    def calculate_simple_circumference(self, yz_points, cross_section_indices):
+        """簡易的な周囲長計算（scipyが無い場合）"""
+        # 重心を計算
+        center = np.mean(yz_points, axis=0)
+        
+        # 重心からの角度でソート
+        angles = np.arctan2(yz_points[:, 1] - center[1], yz_points[:, 0] - center[0])
+        sorted_indices = np.argsort(angles)
+        sorted_points = yz_points[sorted_indices]
+        
+        # 外周の点のみを抽出（距離ベース）
+        distances = np.linalg.norm(sorted_points - center, axis=1)
+        
+        # 角度を一定間隔で区切って、各区間で最も遠い点を選択
+        num_sectors = 20
+        angle_bins = np.linspace(-np.pi, np.pi, num_sectors + 1)
+        perimeter_points = []
+        
+        for i in range(num_sectors):
+            angle_start, angle_end = angle_bins[i], angle_bins[i + 1]
+            mask = (angles >= angle_start) & (angles < angle_end)
+            if np.any(mask):
+                sector_distances = distances[mask]
+                max_dist_idx = np.argmax(sector_distances)
+                sector_indices = np.where(mask)[0]
+                perimeter_points.append(yz_points[sector_indices[max_dist_idx]])
+        
+        if len(perimeter_points) < 3:
+            print("外周点が不足しています")
+            return 0.0
+        
+        perimeter_points = np.array(perimeter_points)
+        
+        # 周囲長を計算
+        circumference = 0.0
+        for i in range(len(perimeter_points)):
+            p1 = perimeter_points[i]
+            p2 = perimeter_points[(i + 1) % len(perimeter_points)]
+            circumference += np.linalg.norm(p2 - p1)
+        
+        print(f"簡易計算による周囲長: {circumference:.3f}")
+        
+        # 断面の点を赤色に染める
+        self.color_cross_section_points(cross_section_indices)
+        
+        return circumference
+    
+    def color_cross_section_points(self, cross_section_indices):
+        """指定されたインデックスの点を赤色に染める"""
+        if not self.point_cloud.has_colors():
+            # 色情報がない場合は全点にデフォルト色を設定
+            points = np.asarray(self.point_cloud.points)
+            colors = np.ones((len(points), 3)) * 0.7  # デフォルトグレー
+            self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
+        
+        colors = np.asarray(self.point_cloud.colors)
+        
+        # 断面の点を赤色に設定
+        colors[cross_section_indices] = [1.0, 0.0, 0.0]  # 赤色
+        
+        self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
+        print(f"断面の点 {len(cross_section_indices)} 個を赤色に染色しました")
 
     def save_result(self, output_dir="output", filename="processed_aruga_1.ply"):
         """処理結果をPLYファイルとして保存"""
@@ -272,6 +415,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'error': 'PLYファイルの読み込みに失敗しました',
                 'foot_length': None,
                 'foot_width': None,
+                'circumference': None,
                 'output_file': None,
                 'point_count': 0
             }
@@ -299,7 +443,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
         # 足の寸法を計算
         if verbose:
             print("足の寸法を計算中...")
-        foot_length, foot_width = processor.calculate_foot_dimensions()
+        foot_length, foot_width, circumference = processor.calculate_foot_dimensions()
         
         # 結果を保存
         if output_file_path is None:
@@ -323,6 +467,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'success': True,
                 'foot_length': foot_length,
                 'foot_width': foot_width,
+                'circumference': circumference,
                 'output_file': output_file_path,
                 'point_count': len(processor.point_cloud.points)
             }
@@ -332,6 +477,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
                 'error': '保存に失敗しました',
                 'foot_length': foot_length,
                 'foot_width': foot_width,
+                'circumference': circumference,
                 'output_file': None,
                 'point_count': len(processor.point_cloud.points)
             }
@@ -342,6 +488,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
             'error': f'処理中にエラーが発生しました: {str(e)}',
             'foot_length': None,
             'foot_width': None,
+            'circumference': None,
             'output_file': None,
             'point_count': 0
         }
@@ -354,6 +501,7 @@ def main():
         print(f"✓ 処理成功")
         print(f"  足の長さ: {result['foot_length']:.3f}")
         print(f"  足の幅: {result['foot_width']:.3f}")
+        print(f"  周囲長: {result['circumference']:.3f}")
         print(f"  点数: {result['point_count']}")
         print(f"  出力ファイル: {result['output_file']}")
     else:

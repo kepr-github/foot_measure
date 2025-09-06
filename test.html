@@ -476,6 +476,7 @@
                         <h3>測定結果</h3>
                         <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(3)}</p>
                         <p><strong>足の幅:</strong> ${result.foot_width.toFixed(3)}</p>
+                        <p><strong>周囲長:</strong> ${result.circumference.toFixed(3)}</p>
                         <p><strong>点数:</strong> ${result.point_count}</p>
                         <p><strong>ファイル名:</strong> ${result.original_filename}</p>
                     `);
@@ -514,6 +515,7 @@
                 if (response.ok) {
                     const footLength = response.headers.get('X-Foot-Length');
                     const footWidth = response.headers.get('X-Foot-Width');
+                    const circumference = response.headers.get('X-Circumference');
                     const pointCount = response.headers.get('X-Point-Count');
                     
                     // 処理済ファイルをArrayBufferとして取得
@@ -529,6 +531,7 @@
                         <h3>測定結果 & Before/After表示</h3>
                         <p><strong>足の長さ:</strong> ${footLength}</p>
                         <p><strong>足の幅:</strong> ${footWidth}</p>
+                        <p><strong>周囲長:</strong> ${circumference}</p>
                         <p><strong>処理後点数:</strong> ${pointCount}</p>
                         <p><strong>元点数(表示分):</strong> ${originalData.vertices.length}</p>
                         <p><em>左右独立ビュー: 左=入力 / 右=処理後 (RGB反映)</em></p>
