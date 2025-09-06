@@ -1,8 +1,8 @@
 import os
 import json
+import logging
 from typing import Dict, Any, Optional
 from openai import OpenAI
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class FootAnalysisDescriptor:
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.client = None
+
         
         if self.api_key:
             try:
@@ -75,28 +76,36 @@ class FootAnalysisDescriptor:
             # 測定データを整理
             data_summary = f"""
 足の測定結果:
-- 足長: {measurements.get('foot_length', 'N/A')} mm
-- 足幅: {measurements.get('foot_width', 'N/A')} mm
-- 足囲: {measurements.get('circumference', 'N/A')} mm
-- 甲高(50%位置): {measurements.get('dorsum_height_50', 'N/A')} mm
+- 足長: {measurements.get('foot_length', 'N/A')} cm
+- 足幅: {measurements.get('foot_width', 'N/A')} cm
+- 足囲: {measurements.get('circumference', 'N/A')} cm
+- 甲高(50%位置): {measurements.get('dorsum_height_50', 'N/A')} cm
 - AHI指数: {measurements.get('ahi', 'N/A')}
 - 点群数: {measurements.get('point_count', 'N/A')} 点
 """
             
             # ChatGPTにリクエスト
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-5-mini",
                 messages=[
                     {
                         "role": "system",
                         "content": """あなたは足の測定データを分析する専門家です。
-                        足の測定結果を受け取り、以下の観点から分析して日本語で説明してください：
-                        1. 全体的な足の特徴
-                        2. 足の形状の特徴
-                        3. 靴選びのアドバイス
-                        4. 健康面での注意点
+                        足の測定結果を受け取り、以下の観点から分析して具体的で実用的な日本語アドバイスを提供してください：
                         
-                        説明は分かりやすく、専門用語は必要に応じて説明を加えてください。"""
+                        1. 全体的な足の特徴（測定値を基準とした客観的評価）
+                        2. 足の形状の特徴（数値的根拠に基づく分析）
+                        3. 靴選びのアドバイス（具体的なワイズ、サイズ、ブランド推奨含む）
+                        4. 健康面での注意点（足の形状に基づく具体的なケア方法）
+                        
+                        測定値の基準:
+                        - 足長: 日本人平均 男性25.5cm、女性23.5cm
+                        - 足幅: 標準的な比率は足長の約40-42%
+                        - 足囲: 標準的な比率は足長の約90-95%
+                        - 甲高: 標準的な比率は足長の約25-28%
+                        - AHI指数: 250-300が標準的
+                        
+                        具体的な数値を用いて、実用的で行動可能なアドバイスを提供してください。"""
                     },
                     {
                         "role": "user",
@@ -152,59 +161,86 @@ class FootAnalysisDescriptor:
         dorsum_height = measurements.get('dorsum_height_50', 0)
         ahi = measurements.get('ahi', 0)
         
-        # 足長による基本分析
-        if foot_length > 270:
+        # 足長による基本分析（センチメートル単位）
+        if foot_length > 27.0:
             size_category = "大きめ"
-            size_advice = "大きめのサイズですので、ゆとりのある靴をお選びください。"
-        elif foot_length > 240:
+            shoe_size = "27.5cm以上"
+            size_advice = f"足長{foot_length:.1f}cmは大きめです。靴のサイズは{shoe_size}をお選びください。つま先に1-1.5cm程度のゆとりを確保してください。"
+        elif foot_length > 24.0:
             size_category = "標準的"
-            size_advice = "標準的なサイズです。一般的な靴のサイズ選びの指標をお使いください。"
+            shoe_size = f"{foot_length + 1.0:.1f}cm程度"
+            size_advice = f"足長{foot_length:.1f}cmは標準的です。靴のサイズは{shoe_size}が適しています。"
         else:
             size_category = "小さめ"
-            size_advice = "小さめのサイズですので、フィット感を重視した靴選びをお勧めします。"
+            shoe_size = f"{foot_length + 0.5:.1f}cm程度"
+            size_advice = f"足長{foot_length:.1f}cmは小さめです。靴のサイズは{shoe_size}をお選びください。フィット感を重視してください。"
         
-        # 足幅による分析
-        if foot_width > 110:
+        # 足幅による分析（実際の足長との比率で判定）
+        width_ratio = (foot_width / foot_length * 100) if foot_length > 0 else 0
+        if width_ratio > 42:
             width_category = "幅広"
-            width_advice = "幅広の足ですので、E〜4Eワイズの靴がお勧めです。"
-        elif foot_width > 95:
+            width_advice = f"足幅{foot_width:.1f}cm（足長比{width_ratio:.1f}%）は幅広です。3E〜4Eワイズの靴がお勧めです。アシックス、ミズノなどの日本ブランドが適しています。"
+        elif width_ratio > 38:
             width_category = "標準"
-            width_advice = "標準的な足幅です。DまたはEワイズの靴が適しています。"
+            width_advice = f"足幅{foot_width:.1f}cm（足長比{width_ratio:.1f}%）は標準的です。E〜2Eワイズの靴が適しています。"
         else:
             width_category = "幅狭"
-            width_advice = "幅狭の足です。BまたはCワイズの靴をお選びください。"
+            width_advice = f"足幅{foot_width:.1f}cm（足長比{width_ratio:.1f}%）は幅狭です。D〜Eワイズの靴をお選びください。海外ブランドも選択肢に入ります。"
         
-        # AHI指数による分析
-        if ahi > 300:
-            ahi_analysis = "甲が高めの足です。甲部分にゆとりのある靴をお選びください。"
-        elif ahi > 250:
-            ahi_analysis = "標準的な甲の高さです。一般的な靴で問題ありません。"
+        # 甲高分析（実際の足長との比率で判定）
+        height_ratio = (dorsum_height / foot_length * 100) if foot_length > 0 else 0
+        if height_ratio > 28:
+            height_analysis = f"甲高{dorsum_height:.1f}cm（足長比{height_ratio:.1f}%）は高めです。甲部分にゆとりのある靴や調整可能な紐靴をお選びください。"
+        elif height_ratio > 25:
+            height_analysis = f"甲高{dorsum_height:.1f}cm（足長比{height_ratio:.1f}%）は標準的です。一般的な靴で問題ありません。"
         else:
-            ahi_analysis = "甲が低めの足です。フィット感の良い靴をお選びください。"
+            height_analysis = f"甲高{dorsum_height:.1f}cm（足長比{height_ratio:.1f}%）は低めです。フィット感の良い靴や薄型インソールの使用をお勧めします。"
+        
+        # AHI指数による詳細分析
+        if ahi > 300:
+            ahi_analysis = f"AHI指数{ahi:.1f}は高めで、甲が高い特徴があります。"
+            health_advice = "甲の圧迫を避けるため、調整可能な靴紐の靴を選び、きつく締めすぎないよう注意してください。"
+        elif ahi > 250:
+            ahi_analysis = f"AHI指数{ahi:.1f}は標準的で、バランスの良い足型です。"
+            health_advice = "標準的な足型なので、一般的な靴選びの指標に従ってください。"
+        else:
+            ahi_analysis = f"AHI指数{ahi:.1f}は低めで、甲が薄い特徴があります。"
+            health_advice = "足のサポートを強化するため、適切なインソールの使用を検討してください。"
         
         return {
-            "overview": f"この足は{size_category}サイズで{width_category}幅の特徴を持っています。全体的にバランスの取れた足形状です。",
-            "shape_features": f"足長{foot_length:.1f}mm、足幅{foot_width:.1f}mmの{size_category}な足です。{ahi_analysis}",
-            "shoe_advice": f"{size_advice} {width_advice} 快適な歩行のため、適切なサイズ選びを心がけてください。",
-            "health_notes": "定期的な足のケアと適切な靴選びにより、足の健康を維持してください。歩行時に痛みを感じる場合は専門医にご相談ください。",
+            "overview": f"足長{foot_length:.1f}cm、足幅{foot_width:.1f}cmの{size_category}サイズです。{width_category}幅で{height_analysis.split('。')[0]}。全体的にバランスの良い足型です。",
+            "shape_features": f"{ahi_analysis} 足長に対する足幅比率は{width_ratio:.1f}%、甲高比率は{height_ratio:.1f}%です。",
+            "shoe_advice": f"{size_advice} {width_advice} 靴選びの際は試着を必須とし、午後の足が膨らんだ時間帯に選ぶことをお勧めします。",
+            "health_notes": f"{health_advice} 定期的な足のケアと適切な靴選びにより、足の健康を維持してください。歩行時に痛みを感じる場合は専門医にご相談ください。",
             "full_description": f"""
 【足の測定結果分析】
 
 ■ 全体的な特徴
-この足は{size_category}サイズ（{foot_length:.1f}mm）で{width_category}幅（{foot_width:.1f}mm）の特徴を持っています。
-足囲は{circumference:.1f}mmで、バランスの取れた足形状です。
+足長: {foot_length:.1f}cm ({size_category})
+足幅: {foot_width:.1f}cm ({width_category}、足長比{width_ratio:.1f}%)
+足囲: {circumference:.1f}cm
+甲高: {dorsum_height:.1f}cm (足長比{height_ratio:.1f}%)
+AHI指数: {ahi:.1f}
 
 ■ 形状の特徴
-甲高は{dorsum_height:.1f}mmで、AHI指数は{ahi:.1f}です。{ahi_analysis}
+{ahi_analysis}
+{height_analysis}
 
 ■ 靴選びのアドバイス
-{size_advice}
-{width_advice}
-足の健康のため、つま先にゆとりがあり、かかとがしっかりフィットする靴を選びましょう。
+【サイズ】{size_advice}
+【幅・ワイズ】{width_advice}
+【推奨事項】
+- 試着は午後に行う（足が膨らんだ状態で確認）
+- つま先に1-1.5cmのゆとりを確保
+- かかとがしっかりフィットすることを確認
+- 歩行時の足の動きを考慮してサイズを選択
 
 ■ 健康面での注意点
-適切なサイズの靴を着用し、長時間の歩行後は足のマッサージを行うことをお勧めします。
-足に痛みや違和感がある場合は、早めに専門医にご相談ください。
+{health_advice}
+- 定期的な足のマッサージとストレッチを実施
+- 長時間同じ靴を履き続けない
+- 足の変化に応じて定期的にサイズを見直す
+- 痛みや違和感がある場合は早めに専門医に相談
 """
         }
 

@@ -16,26 +16,32 @@ class PointCloudProcessor:
         # Open3Dの内部乱数も固定
         o3d.utility.random.seed(42)
         
-    def load_ply_file(self, file_path):
+    def load_ply_file(self, file_path, verbose=True):
         """PLYファイルを読み込み（f_dc_0, f_dc_1, f_dc_2をRGBとして扱う）"""
         # PLYファイルを直接読み込み
         plydata = PlyData.read(file_path)
         vertex = plydata['vertex']
         
         # vertexの構造を確認
-        print(f"Vertex data type: {type(vertex)}")
-        print(f"Vertex element info: {vertex}")
+        if verbose:
+            print(f"Vertex data type: {type(vertex)}")
+            print(f"Vertex element info: {vertex}")
         
         # 利用可能なフィールド名を取得
         available_fields = [prop.name for prop in vertex.properties]
-        print(f"Available fields: {available_fields}")
+        if verbose:
+            print(f"Available fields: {available_fields}")
         
-        # 座標データを取得
+        # 座標データを取得（メートル単位からセンチメートル単位に変換）
         points = np.column_stack([
-            vertex['x'],
-            vertex['y'], 
-            vertex['z']
+            vertex['x'] * 100,  # m -> cm
+            vertex['y'] * 100,  # m -> cm
+            vertex['z'] * 100   # m -> cm
         ])
+        
+        if verbose:
+            print(f"Converted coordinates from meters to centimeters")
+            print(f"Point range: X[{points[:,0].min():.1f}-{points[:,0].max():.1f}] cm, Y[{points[:,1].min():.1f}-{points[:,1].max():.1f}] cm, Z[{points[:,2].min():.1f}-{points[:,2].max():.1f}] cm")
         
         # Open3Dの点群オブジェクトを作成
         pcd = o3d.geometry.PointCloud()
@@ -59,12 +65,14 @@ class PointCloudProcessor:
                 vertex['f_dc_2']
             ])
             
-            print(f"Color range before normalization: R[{colors[:,0].min():.3f}-{colors[:,0].max():.3f}], G[{colors[:,1].min():.3f}-{colors[:,1].max():.3f}], B[{colors[:,2].min():.3f}-{colors[:,2].max():.3f}]")
+            if verbose:
+                print(f"Color range before normalization: R[{colors[:,0].min():.3f}-{colors[:,0].max():.3f}], G[{colors[:,1].min():.3f}-{colors[:,1].max():.3f}], B[{colors[:,2].min():.3f}-{colors[:,2].max():.3f}]")
             
             # 値の範囲を確認し、必要に応じて正規化
             if colors.max() > 1.0 or colors.min() < 0.0:
                 colors = (colors - colors.min()) / (colors.max() - colors.min())
-                print(f"Color range after normalization: R[{colors[:,0].min():.3f}-{colors[:,0].max():.3f}], G[{colors[:,1].min():.3f}-{colors[:,1].max():.3f}], B[{colors[:,2].min():.3f}-{colors[:,2].max():.3f}]")
+                if verbose:
+                    print(f"Color range after normalization: R[{colors[:,0].min():.3f}-{colors[:,0].max():.3f}], G[{colors[:,1].min():.3f}-{colors[:,1].max():.3f}], B[{colors[:,2].min():.3f}-{colors[:,2].max():.3f}]")
             
             pcd.colors = o3d.utility.Vector3dVector(colors)
         
@@ -84,7 +92,7 @@ class PointCloudProcessor:
         self.point_cloud.points = o3d.utility.Vector3dVector(points)
         return True
     
-    def remove_planes(self, distance_threshold=0.01, ransac_n=10, num_iterations=1000):
+    def remove_planes(self, distance_threshold=1.0, ransac_n=10, num_iterations=1000, verbose=True):
         """平面フィッティングで主要な平面を1つ除去（再現性のため固定シード）"""
         if self.point_cloud is None:
             return False
@@ -92,7 +100,8 @@ class PointCloudProcessor:
         remaining_cloud = self.point_cloud
         
         if len(remaining_cloud.points) < 100:
-            print("点群が少なすぎて平面除去できません")
+            if verbose:
+                print("点群が少なすぎて平面除去できません")
             return False
         
         # 再現性のため、処理前に再度シードを設定
@@ -105,23 +114,26 @@ class PointCloudProcessor:
             num_iterations=num_iterations
         )
         
-        print(f"検出された平面のパラメータ: {plane_model}")
-        print(f"平面に属する点数: {len(inliers)} / {len(remaining_cloud.points)}")
+        if verbose:
+            print(f"検出された平面のパラメータ: {plane_model}")
+            print(f"平面に属する点数: {len(inliers)} / {len(remaining_cloud.points)}")
         
         if len(inliers) < 50:  # 十分な点がない場合は平面除去しない
-            print("検出された平面の点数が少ないため、平面除去をスキップします")
+            if verbose:
+                print("検出された平面の点数が少ないため、平面除去をスキップします")
             return True
         
         # 主要な平面の点を除去
         remaining_cloud = remaining_cloud.select_by_index(inliers, invert=True)
-        print(f"平面除去後の点数: {len(remaining_cloud.points)}")
+        if verbose:
+            print(f"平面除去後の点数: {len(remaining_cloud.points)}")
         
         self.point_cloud = remaining_cloud
         return True
     
 
     
-    def align_to_principal_component(self):
+    def align_to_principal_component(self, verbose=True):
         """主成分方向をXZ平面に投影してX軸方向に整列"""
         if self.point_cloud is None:
             return False
@@ -134,7 +146,8 @@ class PointCloudProcessor:
         
         # 第1主成分（最大分散方向）を取得
         principal_component = pca.components_[0]
-        print(f"元の第1主成分ベクトル: {principal_component}")
+        if verbose:
+            print(f"元の第1主成分ベクトル: {principal_component}")
         
         # 主成分をXZ平面に投影（Y成分を0にする）
         projected_component = np.array([principal_component[0], 0, principal_component[2]])
@@ -142,7 +155,8 @@ class PointCloudProcessor:
         
         if projected_component_norm > 1e-6:  # 投影されたベクトルが有効な場合
             projected_component = projected_component / projected_component_norm
-            print(f"XZ平面に投影された主成分ベクトル: {projected_component}")
+            if verbose:
+                print(f"XZ平面に投影された主成分ベクトル: {projected_component}")
             
             # XZ平面上でX軸ベクトル [1, 0, 0] に合わせる
             x_axis = np.array([1, 0, 0])
@@ -160,7 +174,8 @@ class PointCloudProcessor:
             if cross_product[1] < 0:  # 時計回り
                 angle = -angle
             
-            print(f"Y軸周りの回転角度: {np.degrees(angle):.2f}度")
+            if verbose:
+                print(f"Y軸周りの回転角度: {np.degrees(angle):.2f}度")
             
             # Y軸周りの回転行列を作成
             rotation_matrix = np.array([
@@ -183,11 +198,12 @@ class PointCloudProcessor:
                 rotated_normals = normals @ rotation_matrix.T
                 self.point_cloud.normals = o3d.utility.Vector3dVector(rotated_normals)
         else:
-            print("主成分のXZ投影が無効なため、回転をスキップします")
+            if verbose:
+                print("主成分のXZ投影が無効なため、回転をスキップします")
         
         return True
     
-    def remove_noise(self, nb_neighbors=30, std_ratio=0.5):
+    def remove_noise(self, nb_neighbors=30, std_ratio=0.5, verbose=True):
         """統計的外れ値除去によるノイズ除去（強め、再現性確保）"""
         if self.point_cloud is None:
             return False
@@ -195,7 +211,8 @@ class PointCloudProcessor:
         # 再現性のため、処理前にシードを設定
         np.random.seed(42)
         
-        print(f"ノイズ除去前の点数: {len(self.point_cloud.points)}")
+        if verbose:
+            print(f"ノイズ除去前の点数: {len(self.point_cloud.points)}")
         
         # 統計的外れ値除去（より強力な設定）
         cl, ind = self.point_cloud.remove_statistical_outlier(
@@ -204,21 +221,24 @@ class PointCloudProcessor:
         )
         
         self.point_cloud = self.point_cloud.select_by_index(ind)
-        print(f"ノイズ除去後の点数: {len(self.point_cloud.points)}")
+        if verbose:
+            print(f"ノイズ除去後の点数: {len(self.point_cloud.points)}")
         
         # さらに半径ベースの外れ値除去も追加
-        print("半径ベースの外れ値除去を実行中...")
+        if verbose:
+            print("半径ベースの外れ値除去を実行中...")
         cl2, ind2 = self.point_cloud.remove_radius_outlier(
             nb_points=10,  # 半径内に最低10点必要
-            radius=0.02    # 半径2cm
+            radius=2.0     # 半径2cm（センチメートル単位）
         )
         
         self.point_cloud = self.point_cloud.select_by_index(ind2)
-        print(f"半径ベース除去後の点数: {len(self.point_cloud.points)}")
+        if verbose:
+            print(f"半径ベース除去後の点数: {len(self.point_cloud.points)}")
         
         return True
     
-    def calculate_foot_dimensions(self):
+    def calculate_foot_dimensions(self, verbose=True):
         """足の長さ、幅、周囲長、甲高@50%、AHIを計算"""
         if self.point_cloud is None:
             return None, None, None, None, None
@@ -237,31 +257,32 @@ class PointCloudProcessor:
         foot_width = abs(z_max - z_min)
         
         # 周囲長計算：各X座標でZ座標の差が最大となる位置を見つける
-        circumference = self.calculate_circumference_at_max_z_range()
+        circumference = self.calculate_circumference_at_max_z_range(verbose)
         
         # 甲高@50%とAHIを計算
-        dorsum_height_50, ahi = self.calculate_arch_height_index(foot_length, truncated_foot_length)
+        dorsum_height_50, ahi = self.calculate_arch_height_index(foot_length, truncated_foot_length, verbose)
         
-        print(f"足の寸法:")
-        print(f"  長さ (X軸方向): {foot_length:.3f}")
-        print(f"  幅   (Z軸方向): {foot_width:.3f}")
-        print(f"  周囲長: {circumference:.3f}")
-        print(f"  甲高@50%: {dorsum_height_50:.3f}")
-        print(f"  AHI (Arch Height Index): {ahi:.3f}")
-        print(f"  X範囲: {x_min:.3f} ～ {x_max:.3f}")
-        print(f"  Z範囲: {z_min:.3f} ～ {z_max:.3f}")
+        if verbose:
+            print(f"足の寸法:")
+            print(f"  長さ (X軸方向): {foot_length:.3f}")
+            print(f"  幅   (Z軸方向): {foot_width:.3f}")
+            print(f"  周囲長: {circumference:.3f}")
+            print(f"  甲高@50%: {dorsum_height_50:.3f}")
+            print(f"  AHI (Arch Height Index): {ahi:.3f}")
+            print(f"  X範囲: {x_min:.3f} ～ {x_max:.3f}")
+            print(f"  Z範囲: {z_min:.3f} ～ {z_max:.3f}")
         
-        # AHIの評価
-        if ahi > 0.356:
-            print(f"  AHI評価: 高弓足 (>0.356)")
-        elif ahi <= 0.275:
-            print(f"  AHI評価: 扁平足 (≤0.275)")
-        else:
-            print(f"  AHI評価: 正常範囲 (0.275-0.356)")
+            # AHIの評価
+            if ahi > 0.356:
+                print(f"  AHI評価: 高弓足 (>0.356)")
+            elif ahi <= 0.275:
+                print(f"  AHI評価: 扁平足 (≤0.275)")
+            else:
+                print(f"  AHI評価: 正常範囲 (0.275-0.356)")
         
         return foot_length, foot_width, circumference, dorsum_height_50, ahi
     
-    def calculate_circumference_at_max_z_range(self):
+    def calculate_circumference_at_max_z_range(self, verbose=True):
         """Z座標の差が最大となるX位置でYZ平面の断面周囲長を計算し、その断面点を赤色に染める"""
         points = np.asarray(self.point_cloud.points)
         
@@ -286,10 +307,12 @@ class PointCloudProcessor:
                     best_x_pos = (x_start + x_end) / 2
         
         if best_x_pos is None:
-            print("断面位置を特定できませんでした")
+            if verbose:
+                print("断面位置を特定できませんでした")
             return 0.0
         
-        print(f"最大Z範囲位置: X = {best_x_pos:.3f}, Z範囲 = {max_z_range:.3f}")
+        if verbose:
+            print(f"最大Z範囲位置: X = {best_x_pos:.3f}, Z範囲 = {max_z_range:.3f}")
         
         # 最適なX位置での断面点を抽出（幅を少し広げて十分な点を確保）
         slice_width = (x_max - x_min) / num_slices * 1.5  # 少し幅を広げる
@@ -298,10 +321,12 @@ class PointCloudProcessor:
         cross_section_indices = np.where(mask)[0]
         
         if len(cross_section_points) < 3:
-            print("断面の点数が不足しています")
+            if verbose:
+                print("断面の点数が不足しています")
             return 0.0
         
-        print(f"断面点数: {len(cross_section_points)}")
+        if verbose:
+            print(f"断面点数: {len(cross_section_points)}")
         
         # YZ平面への投影（X座標を無視してY,Z座標のみ使用）
         yz_points = cross_section_points[:, [1, 2]]  # Y, Z座標のみ
@@ -328,23 +353,26 @@ class PointCloudProcessor:
                 p2 = hull_points[(i + 1) % len(hull_points)]
                 circumference += np.linalg.norm(p2 - p1)
             
-            print(f"凸包による周囲長: {circumference:.3f}")
-            print(f"凸包頂点数: {len(hull_points)}")
+            if verbose:
+                print(f"凸包による周囲長: {circumference:.3f}")
+                print(f"凸包頂点数: {len(hull_points)}")
             
             # 断面の点を赤色に染める
-            self.color_cross_section_points(cross_section_indices)
+            self.color_cross_section_points(cross_section_indices, verbose)
             
             return circumference
             
         except ImportError:
-            print("scipy.spatialが利用できません。簡易的な周囲長計算を実行します")
+            if verbose:
+                print("scipy.spatialが利用できません。簡易的な周囲長計算を実行します")
             # scipyが無い場合の簡易計算
-            return self.calculate_simple_circumference(yz_points, cross_section_indices)
+            return self.calculate_simple_circumference(yz_points, cross_section_indices, verbose)
         except Exception as e:
-            print(f"凸包計算エラー: {e}")
-            return self.calculate_simple_circumference(yz_points, cross_section_indices)
+            if verbose:
+                print(f"凸包計算エラー: {e}")
+            return self.calculate_simple_circumference(yz_points, cross_section_indices, verbose)
     
-    def calculate_simple_circumference(self, yz_points, cross_section_indices):
+    def calculate_simple_circumference(self, yz_points, cross_section_indices, verbose=True):
         """簡易的な周囲長計算（scipyが無い場合、再現性確保）"""
         # 再現性のため、処理前にシードを設定
         np.random.seed(42)
@@ -387,14 +415,15 @@ class PointCloudProcessor:
             p2 = perimeter_points[(i + 1) % len(perimeter_points)]
             circumference += np.linalg.norm(p2 - p1)
         
-        print(f"簡易計算による周囲長: {circumference:.3f}")
+        if verbose:
+            print(f"簡易計算による周囲長: {circumference:.3f}")
         
         # 断面の点を赤色に染める
-        self.color_cross_section_points(cross_section_indices)
+        self.color_cross_section_points(cross_section_indices, verbose)
         
         return circumference
     
-    def color_cross_section_points(self, cross_section_indices):
+    def color_cross_section_points(self, cross_section_indices, verbose=True):
         """指定されたインデックスの点を赤色に染める"""
         if not self.point_cloud.has_colors():
             # 色情報がない場合は全点にデフォルト色を設定
@@ -408,9 +437,10 @@ class PointCloudProcessor:
         colors[cross_section_indices] = [1.0, 0.0, 0.0]  # 赤色
         
         self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
-        print(f"断面の点 {len(cross_section_indices)} 個を赤色に染色しました")
+        if verbose:
+            print(f"断面の点 {len(cross_section_indices)} 個を赤色に染色しました")
 
-    def calculate_arch_height_index(self, foot_length, truncated_foot_length):
+    def calculate_arch_height_index(self, foot_length, truncated_foot_length, verbose=True):
         """甲高@50%とAHI（Arch Height Index）を計算"""
         if self.point_cloud is None:
             return None, None
@@ -421,7 +451,8 @@ class PointCloudProcessor:
         x_min, x_max = points[:, 0].min(), points[:, 0].max()
         x_50_percent = x_min + 0.5 * foot_length
         
-        print(f"50%位置のX座標: {x_50_percent:.3f}")
+        if verbose:
+            print(f"50%位置のX座標: {x_50_percent:.3f}")
         
         # X = 50%位置での直交スライス平面を生成（Xに直交）
         slice_width = foot_length * 0.02  # 足長の2%の幅で断面を取る
@@ -430,10 +461,12 @@ class PointCloudProcessor:
         slice_indices = np.where(mask)[0]
         
         if len(slice_points) < 3:
-            print("50%位置での断面点が不足しています")
+            if verbose:
+                print("50%位置での断面点が不足しています")
             return 0.0, 0.0
         
-        print(f"50%位置断面の点数: {len(slice_points)}")
+        if verbose:
+            print(f"50%位置断面の点数: {len(slice_points)}")
         
         # スライスで得た断面点群の最大Z（背側高さ）を取得
         # Y軸の最小値を足底平面として扱う
@@ -447,17 +480,18 @@ class PointCloudProcessor:
         # AHI = dorsum_height@50% / truncated_foot_length
         ahi = dorsum_height_50 / truncated_foot_length if truncated_foot_length > 0 else 0.0
         
-        print(f"足底平面Y座標: {y_min:.3f}")
-        print(f"50%位置最大高さ: {slice_y_max:.3f}")
-        print(f"甲高@50%: {dorsum_height_50:.3f}")
-        print(f"AHI: {ahi:.3f}")
+        if verbose:
+            print(f"足底平面Y座標: {y_min:.3f}")
+            print(f"50%位置最大高さ: {slice_y_max:.3f}")
+            print(f"甲高@50%: {dorsum_height_50:.3f}")
+            print(f"AHI: {ahi:.3f}")
         
         # 50%位置断面の点を青色に染める
-        self.color_arch_slice_points(slice_indices)
+        self.color_arch_slice_points(slice_indices, verbose)
         
         return dorsum_height_50, ahi
     
-    def color_arch_slice_points(self, slice_indices):
+    def color_arch_slice_points(self, slice_indices, verbose=True):
         """甲高@50%測定に使用した断面の点を青色に染める"""
         if not self.point_cloud.has_colors():
             # 色情報がない場合は全点にデフォルト色を設定
@@ -471,7 +505,8 @@ class PointCloudProcessor:
         colors[slice_indices] = [0.0, 0.0, 1.0]  # 青色
         
         self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
-        print(f"甲高@50%測定断面の点 {len(slice_indices)} 個を青色に染色しました")
+        if verbose:
+            print(f"甲高@50%測定断面の点 {len(slice_indices)} 個を青色に染色しました")
 
     def save_result(self, output_dir="output", filename="processed_aruga_1.ply"):
         """処理結果をPLYファイルとして保存"""
@@ -510,7 +545,7 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
         # PLYファイルを読み込み
         if verbose:
             print("PLYファイルを読み込み中...")
-        result = processor.load_ply_file(input_file_path)
+        result = processor.load_ply_file(input_file_path, verbose)
         if not result:
             return {
                 'success': False,
@@ -534,20 +569,20 @@ def process_ply_file(input_file_path, output_file_path=None, verbose=True):
         
         if verbose:
             print("主要な平面を除去中...")
-        processor.remove_planes()
+        processor.remove_planes(verbose=verbose)
         
         if verbose:
             print("主成分軸に整列中...")
-        processor.align_to_principal_component()
+        processor.align_to_principal_component(verbose)
         
         if verbose:
             print("ノイズ除去中...")
-        processor.remove_noise()
+        processor.remove_noise(verbose=verbose)
         
         # 足の寸法を計算
         if verbose:
             print("足の寸法を計算中...")
-        foot_length, foot_width, circumference, dorsum_height_50, ahi = processor.calculate_foot_dimensions()
+        foot_length, foot_width, circumference, dorsum_height_50, ahi = processor.calculate_foot_dimensions(verbose)
         
         # 結果を保存
         if output_file_path is None:

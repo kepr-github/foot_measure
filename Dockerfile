@@ -28,9 +28,6 @@ COPY requirements.txt .
 # Pythonパッケージをインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
-# アプリケーションファイルをコピー
-COPY . .
-
 # ポート8000を公開
 EXPOSE 8000
 

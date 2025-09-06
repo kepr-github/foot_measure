@@ -137,17 +137,17 @@
         
         <h2>数値データからの言語解析テスト</h2>
         <div class="upload-area">
-            <label>足長 (mm):</label>
-            <input type="number" id="footLength" value="250" step="0.1" />
+            <label>足長 (cm):</label>
+            <input type="number" id="footLength" value="25.0" step="0.1" />
             <br><br>
-            <label>足幅 (mm):</label>
-            <input type="number" id="footWidth" value="100" step="0.1" />
+            <label>足幅 (cm):</label>
+            <input type="number" id="footWidth" value="10.0" step="0.1" />
             <br><br>
-            <label>足囲 (mm):</label>
-            <input type="number" id="circumference" value="240" step="0.1" />
+            <label>足囲 (cm):</label>
+            <input type="number" id="circumference" value="24.0" step="0.1" />
             <br><br>
-            <label>甲高 (mm):</label>
-            <input type="number" id="dorsumHeight" value="65" step="0.1" />
+            <label>甲高 (cm):</label>
+            <input type="number" id="dorsumHeight" value="6.5" step="0.1" />
             <br><br>
             <label>AHI指数:</label>
             <input type="number" id="ahi" value="280" step="0.1" />
@@ -501,11 +501,11 @@
                     showResult(`
                         <h3>測定結果</h3>
                         <p><strong>解析ソース:</strong> ${result.analysis_source === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'}</p>
-                        <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(3)} mm</p>
-                        <p><strong>足の幅:</strong> ${result.foot_width.toFixed(3)} mm</p>
-                        <p><strong>周囲長:</strong> ${result.circumference.toFixed(3)} mm</p>
-                        <p><strong>甲高@50%:</strong> ${result.dorsum_height_50.toFixed(3)} mm</p>
-                        <p><strong>AHI:</strong> ${result.ahi.toFixed(3)}</p>
+                        <p><strong>足の長さ:</strong> ${result.foot_length.toFixed(1)} cm</p>
+                        <p><strong>足の幅:</strong> ${result.foot_width.toFixed(1)} cm</p>
+                        <p><strong>周囲長:</strong> ${result.circumference.toFixed(1)} cm</p>
+                        <p><strong>甲高@50%:</strong> ${result.dorsum_height_50.toFixed(1)} cm</p>
+                        <p><strong>AHI:</strong> ${result.ahi.toFixed(1)}</p>
                         <p><strong>点数:</strong> ${result.point_count}</p>
                         <p><strong>ファイル名:</strong> ${result.original_filename}</p>
                         
@@ -626,11 +626,11 @@
                         <div style="display: flex; gap: 20px; margin-bottom: 20px;">
                             <div style="flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px;">
                                 <h4>数値測定結果</h4>
-                                <p><strong>足の長さ:</strong> ${footLength} mm</p>
-                                <p><strong>足の幅:</strong> ${footWidth} mm</p>
-                                <p><strong>周囲長:</strong> ${circumference} mm</p>
-                                <p><strong>甲高@50%:</strong> ${dorsumHeight50} mm</p>
-                                <p><strong>AHI:</strong> ${ahi}</p>
+                                <p><strong>足の長さ:</strong> ${parseFloat(footLength).toFixed(1)} cm</p>
+                                <p><strong>足の幅:</strong> ${parseFloat(footWidth).toFixed(1)} cm</p>
+                                <p><strong>周囲長:</strong> ${parseFloat(circumference).toFixed(1)} cm</p>
+                                <p><strong>甲高@50%:</strong> ${parseFloat(dorsumHeight50).toFixed(1)} cm</p>
+                                <p><strong>AHI:</strong> ${parseFloat(ahi).toFixed(1)}</p>
                                 <p><strong>処理後点数:</strong> ${pointCount}</p>
                                 <p><strong>元点数(表示分):</strong> ${originalData.vertices.length}</p>
                             </div>`;
@@ -790,11 +790,11 @@
                         <p><strong>解析ソース:</strong> ${result.analysis_source === 'chatgpt' ? 'ChatGPT連携' : 'ダミーデータ'}</p>
                         
                         <h4>入力数値</h4>
-                        <p><strong>足長:</strong> ${footLength} mm</p>
-                        <p><strong>足幅:</strong> ${footWidth} mm</p>
-                        <p><strong>足囲:</strong> ${circumference} mm</p>
-                        <p><strong>甲高:</strong> ${dorsumHeight} mm</p>
-                        <p><strong>AHI指数:</strong> ${ahi}</p>
+                        <p><strong>足長:</strong> ${footLength.toFixed(1)} cm</p>
+                        <p><strong>足幅:</strong> ${footWidth.toFixed(1)} cm</p>
+                        <p><strong>足囲:</strong> ${circumference.toFixed(1)} cm</p>
+                        <p><strong>甲高:</strong> ${dorsumHeight.toFixed(1)} cm</p>
+                        <p><strong>AHI指数:</strong> ${ahi.toFixed(1)}</p>
                         <p><strong>点群数:</strong> ${pointCount} 点</p>
                         
                         <h4>全体的な特徴</h4>
