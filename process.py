@@ -1,13 +1,20 @@
 import open3d as o3d
 import numpy as np
 import os
+import random
 from sklearn.decomposition import PCA
 from plyfile import PlyData, PlyElement
+
+# 再現性のためのシード固定
+np.random.seed(42)
+random.seed(42)
 
 class PointCloudProcessor:
     def __init__(self):
         """点群処理クラスの初期化"""
         self.point_cloud = None
+        # Open3Dの内部乱数も固定
+        o3d.utility.random.seed(42)
         
     def load_ply_file(self, file_path):
         """PLYファイルを読み込み（f_dc_0, f_dc_1, f_dc_2をRGBとして扱う）"""
@@ -78,7 +85,7 @@ class PointCloudProcessor:
         return True
     
     def remove_planes(self, distance_threshold=0.01, ransac_n=10, num_iterations=1000):
-        """平面フィッティングで主要な平面を1つ除去"""
+        """平面フィッティングで主要な平面を1つ除去（再現性のため固定シード）"""
         if self.point_cloud is None:
             return False
         
@@ -87,6 +94,9 @@ class PointCloudProcessor:
         if len(remaining_cloud.points) < 100:
             print("点群が少なすぎて平面除去できません")
             return False
+        
+        # 再現性のため、処理前に再度シードを設定
+        np.random.seed(42)
         
         # RANSAC平面検出（1回のみ実行）
         plane_model, inliers = remaining_cloud.segment_plane(
@@ -178,9 +188,12 @@ class PointCloudProcessor:
         return True
     
     def remove_noise(self, nb_neighbors=30, std_ratio=0.5):
-        """統計的外れ値除去によるノイズ除去（強め）"""
+        """統計的外れ値除去によるノイズ除去（強め、再現性確保）"""
         if self.point_cloud is None:
             return False
+        
+        # 再現性のため、処理前にシードを設定
+        np.random.seed(42)
         
         print(f"ノイズ除去前の点数: {len(self.point_cloud.points)}")
         
@@ -280,10 +293,17 @@ class PointCloudProcessor:
         # 2D凸包を計算して周囲長を求める
         try:
             from scipy.spatial import ConvexHull
-            hull = ConvexHull(yz_points)
+            # 再現性のため、処理前にシードを設定
+            np.random.seed(42)
+            
+            # 点群をソートして処理順序を安定化
+            sorted_indices = np.lexsort((yz_points[:, 1], yz_points[:, 0]))
+            yz_points_sorted = yz_points[sorted_indices]
+            
+            hull = ConvexHull(yz_points_sorted)
             
             # 凸包の頂点を順序に従って取得
-            hull_points = yz_points[hull.vertices]
+            hull_points = yz_points_sorted[hull.vertices]
             
             # 周囲長を計算
             circumference = 0.0
@@ -309,7 +329,10 @@ class PointCloudProcessor:
             return self.calculate_simple_circumference(yz_points, cross_section_indices)
     
     def calculate_simple_circumference(self, yz_points, cross_section_indices):
-        """簡易的な周囲長計算（scipyが無い場合）"""
+        """簡易的な周囲長計算（scipyが無い場合、再現性確保）"""
+        # 再現性のため、処理前にシードを設定
+        np.random.seed(42)
+        
         # 重心を計算
         center = np.mean(yz_points, axis=0)
         
