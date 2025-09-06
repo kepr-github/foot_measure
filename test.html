@@ -19,11 +19,23 @@
     <div class="container">
         <h1>Foot Measurement API Test</h1>
         
+        <h2>足の寸法測定</h2>
         <div class="upload-area">
             <input type="file" id="fileInput" accept=".ply" />
             <br><br>
             <button onclick="uploadFile()">測定実行</button>
             <button onclick="uploadFileWithDownload()">測定実行 + ファイルダウンロード</button>
+        </div>
+        
+        <h2>足と靴の一致度解析</h2>
+        <div class="upload-area">
+            <label>足のPLYファイル:</label>
+            <input type="file" id="footFileInput" accept=".ply" />
+            <br><br>
+            <label>靴のPLYファイル:</label>
+            <input type="file" id="shoeFileInput" accept=".ply" />
+            <br><br>
+            <button onclick="analyzeFitMatch()">一致度解析実行</button>
         </div>
         
         <div id="loading" class="loading">
@@ -38,6 +50,7 @@
             <li><strong>GET /health</strong> - ヘルスチェック</li>
             <li><strong>POST /process</strong> - PLY処理（寸法のみ）</li>
             <li><strong>POST /process-with-file</strong> - PLY処理 + ファイル返却</li>
+            <li><strong>POST /match</strong> - 足と靴の一致度解析</li>
         </ul>
     </div>
 
@@ -139,6 +152,64 @@
                     `);
                 } else {
                     const result = await response.json();
+                    showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
+                }
+            } catch (error) {
+                showResult(`<h3>エラー</h3><p>通信エラー: ${error.message}</p>`, true);
+            }
+        }
+        
+        async function analyzeFitMatch() {
+            const footFileInput = document.getElementById('footFileInput');
+            const shoeFileInput = document.getElementById('shoeFileInput');
+            const footFile = footFileInput.files[0];
+            const shoeFile = shoeFileInput.files[0];
+            
+            if (!footFile || !shoeFile) {
+                alert('足と靴の両方のPLYファイルを選択してください');
+                return;
+            }
+            
+            showLoading();
+            
+            const formData = new FormData();
+            formData.append('foot_file', footFile);
+            formData.append('shoe_file', shoeFile);
+            
+            try {
+                const response = await fetch('/match', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    const recommendations = result.recommendations.map(rec => `<li>${rec}</li>`).join('');
+                    const pressurePoints = result.fit_analysis.pressure_distribution
+                        .map(p => `<li>${p.location}: ${p.pressure}</li>`).join('');
+                    
+                    showResult(`
+                        <h3>足と靴の一致度解析結果</h3>
+                        <p><strong>一致度スコア:</strong> ${(result.match_score * 100).toFixed(1)}%</p>
+                        <p><strong>快適性スコア:</strong> ${(result.fit_analysis.comfort_score * 100).toFixed(1)}%</p>
+                        <p><strong>安定性スコア:</strong> ${(result.fit_analysis.stability_score * 100).toFixed(1)}%</p>
+                        
+                        <h4>寸法差異</h4>
+                        <p><strong>長さ差:</strong> ${result.fit_analysis.dimensional_fit.length_difference.toFixed(3)}m</p>
+                        <p><strong>幅差:</strong> ${result.fit_analysis.dimensional_fit.width_difference.toFixed(3)}m</p>
+                        <p><strong>高さ差:</strong> ${result.fit_analysis.dimensional_fit.height_difference.toFixed(3)}m</p>
+                        
+                        <h4>圧力分布</h4>
+                        <ul>${pressurePoints}</ul>
+                        
+                        <h4>推奨事項</h4>
+                        <ul>${recommendations}</ul>
+                        
+                        <p><strong>足ファイル:</strong> ${result.foot_filename}</p>
+                        <p><strong>靴ファイル:</strong> ${result.shoe_filename}</p>
+                    `);
+                } else {
                     showResult(`<h3>エラー</h3><p>${result.detail}</p>`, true);
                 }
             } catch (error) {

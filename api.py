@@ -37,6 +37,7 @@ async def root():
             "/": "API情報",
             "/test": "テストページ",
             "/process": "PLYファイル処理",
+            "/match": "足と靴の一致度解析",
             "/health": "ヘルスチェック"
         }
     }
@@ -163,6 +164,55 @@ async def process_ply_with_file(file: UploadFile = File(...)):
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"処理中にエラーが発生しました: {str(e)}")
+
+@app.post("/match")
+async def match_foot_shoe(foot_file: UploadFile = File(...), shoe_file: UploadFile = File(...)):
+    """
+    足の点群ファイルと靴の点群ファイルを受け取って一致度を解析
+    
+    Args:
+        foot_file: 足のPLYファイル
+        shoe_file: 靴のPLYファイル
+    
+    Returns:
+        dict: 一致度解析結果
+    """
+    # ファイル形式チェック
+    if not foot_file.filename.lower().endswith('.ply'):
+        raise HTTPException(status_code=400, detail="足ファイルはPLY形式である必要があります")
+    
+    if not shoe_file.filename.lower().endswith('.ply'):
+        raise HTTPException(status_code=400, detail="靴ファイルはPLY形式である必要があります")
+    
+    # 一時ディレクトリを作成
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            # アップロードされたファイルを一時保存
+            foot_path = os.path.join(temp_dir, "foot.ply")
+            shoe_path = os.path.join(temp_dir, "shoe.ply")
+            
+            with open(foot_path, "wb") as buffer:
+                shutil.copyfileobj(foot_file.file, buffer)
+                
+            with open(shoe_path, "wb") as buffer:
+                shutil.copyfileobj(shoe_file.file, buffer)
+            
+            # ダミー解析処理を呼び出し
+            from shoe_match import analyze_foot_shoe_match
+            result = analyze_foot_shoe_match(foot_path, shoe_path)
+            
+            return {
+                "success": True,
+                "match_score": result['match_score'],
+                "fit_analysis": result['fit_analysis'],
+                "recommendations": result['recommendations'],
+                "foot_filename": foot_file.filename,
+                "shoe_filename": shoe_file.filename,
+                "message": "一致度解析が正常に完了しました"
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"解析中にエラーが発生しました: {str(e)}")
 
 if __name__ == "__main__":
     # APIサーバーを起動
